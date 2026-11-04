@@ -14,13 +14,13 @@
 
 **Agent Autoloop** 是一个极轻量的自动化中台。它把任务调度做成一个零外部依赖的**内核**，把事件来源、Agent、通知通道，甚至代码上线流水线全部拆成可随时插拔的**插件**。
 
-- **一台电脑、一条命令就能跑。** 装在你的 Mac 或 Linux 上，不用买云服务器，也不用开放公网端口。
+- **一台电脑、一条命令就能跑。** 装在你的 Mac、Linux 或此 Fork 支持的原生 Windows 上，不用买云服务器，也不用开放公网端口。
 - **一行配置接新 Agent。** 不需要 SDK，也不需要改 Agent 源码，能接收提示词并打印最后一条回复的命令行工具都能接。
 - **没有后台界面。** 需要你拍板时把卡片推到飞书、钉钉、企微、Slack、Discord 或桌面通知；想看全局进展，敲一行命令。
 
 ## 上手
 
-支持 macOS 和 Linux。运行前需要装好 Node 24、Git、curl，以及任意一个你已经登录好的命令行 Agent，不需要 GitHub 账号。也可以直接把[安装说明](INSTALL.md)丢给你的 Agent，让它替你装好。
+macOS 和 Linux 使用下面的安装命令；此 Fork 另提供 [Windows 原生安装](docs/windows.md)，在 PowerShell 中运行 `install.ps1 -Agent codex`。运行前需要装好 Node 24、Git，以及任意一个你已经登录好的命令行 Agent；Shell 安装另需 curl。不需要 GitHub 账号，也可以直接把[安装说明](INSTALL.md)丢给你的 Agent，让它替你装好。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KKKKhazix/agent-autoloop/main/install.sh | sh
@@ -238,7 +238,7 @@ Apple M5 Pro、24 GB、Node 24.21.0。写入逐条提交，事务落盘后才应
 | `skills/agent-autoloop/` | 中台的正式配置与操作手册，安装时也提供给 Agent 使用 |
 | `docs/` | 通信协议、插件开发说明与中英文架构图 |
 | `tests/`、`sim/` | 日常行为测试，以及模拟、穷举、强杀和变异检查 |
-| `scripts/`、`.github/workflows/` | 性能与真机验证、安装冒烟脚本，以及 Linux / macOS CI |
+| `scripts/`、`.github/workflows/` | 性能与真机验证、安装冒烟脚本，以及 Linux / macOS / Windows CI |
 | 根目录文档与 `install.sh` | 中英文 README、安装说明、安全边界、开发约定、许可证与安装脚本 |
 
 读代码可以从 `bin/agent-autoloop.ts` → `cli/main.ts` 开始，再按功能进入 `host/`、`worker/` 或 `plugins/`；内核设计先看[协议](docs/protocol.md)。同名文件分属不同层：`host/http.ts` 转换 Node 请求，`kernel/http.ts` 定义接口行为；`protocol/rules.ts` 校验输入，`kernel/rules.ts` 定义规则类型和匹配。

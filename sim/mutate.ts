@@ -78,7 +78,11 @@ export function mutate() {
   try {
     for (const name of ["kernel", "protocol", "host", "tests", "package.json"])
       cpSync(join(root, name), join(folder, name), { recursive: true });
-    symlinkSync(join(root, "node_modules"), join(folder, "node_modules"));
+    symlinkSync(
+      join(root, "node_modules"),
+      join(folder, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
     const baseline = run();
     assert.equal(baseline.status, 0, baseline.stdout + baseline.stderr);
     assert.ok(Number(/# tests (\d+)/.exec(baseline.stdout)?.[1]) > 50, "基线必须确实执行行为测试");

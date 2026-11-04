@@ -98,6 +98,8 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 `access` 由插件翻译，不是中台提供的系统沙箱。以下是未额外放宽本机权限时的行为。
 
+Windows 原生版本直接调用可执行文件及标准 npm 的 Node 入口，不让提示词经过 cmd 展开。Codex 保留自己的 Windows 沙箱，本轮资料目录作为附加目录提供；通用 `command` 的权限仍由该程序决定。Shell 示例需要对应的 Shell 工具，原生安装与任务进程说明见 [Windows 文档](windows.md)。
+
 | 插件 | `read` | `edit` | `full` |
 |---|---|---|---|
 | Codex | `read-only`：能跑 shell，不能写文件，命令默认不能联网 | `workspace-write`：能跑 shell、写工作目录和临时目录，命令默认不能联网 | `danger-full-access`：能写文件、跑 shell、联网，无审批 |

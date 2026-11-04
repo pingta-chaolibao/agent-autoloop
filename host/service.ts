@@ -5,6 +5,14 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import path from "node:path";
 import { HOME } from "./home.ts";
+import { commitOf } from "./version.ts";
+import {
+  installWindowsService,
+  removeWindowsService,
+  runningWindowsUp,
+  stopFile,
+  windowsServiceRunning,
+} from "./windows-service.ts";
 
 const PROGRAM = path.join(import.meta.dirname, "..", "bin", "agent-autoloop.ts");
 /** Another install on this machine (another AGENT_AUTOLOOP_HOME) has a service of its own. */
@@ -61,6 +69,9 @@ const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(
 
 export function installService() {
   mkdirSync(path.join(HOME, "logs"), { recursive: true, mode: 0o700 });
+  if (process.platform === "win32") {
+    return installWindowsService(label(), PROGRAM, commitOf(), stopUp);
+  }
   if (process.platform === "darwin") {
     mkdirSync(path.dirname(plistFile()), { recursive: true });
     writeFileSync(plistFile(), plist());
@@ -78,6 +89,9 @@ export function installService() {
 }
 
 export function removeService() {
+  if (process.platform === "win32") {
+    return removeWindowsService(label(), stopUp);
+  }
   const file = process.platform === "darwin" ? plistFile() : unitFile();
   if (!existsSync(file) || !readFileSync(file, "utf8").includes(xml(PROGRAM))) return;
   if (process.platform === "darwin") {
@@ -91,6 +105,7 @@ export function removeService() {
 
 /** The process that left its number in up.pid, if it still is that process: the number may be someone else's by now. */
 export function runningUp() {
+  if (process.platform === "win32") return runningWindowsUp();
   const file = path.join(HOME, "up.pid");
   if (!existsSync(file)) return null;
   const pid = readFileSync(file, "utf8").trim();
@@ -108,6 +123,12 @@ export function runningUp() {
 export function stopUp() {
   const pid = runningUp();
   if (pid === null) return;
+  if (process.platform === "win32") {
+    writeFileSync(stopFile, "stop");
+    for (let tries = 0; tries < 50 && runningUp() !== null; tries++) pause(100);
+    if (runningUp() === pid) process.kill(pid, "SIGKILL");
+    return;
+  }
   try {
     process.kill(pid, "SIGTERM");
   } catch {}
@@ -115,6 +136,7 @@ export function stopUp() {
 }
 
 export function serviceRunning() {
+  if (process.platform === "win32") return windowsServiceRunning(label());
   if (process.platform === "darwin") return existsSync(plistFile()) && launchdHasIt();
   return spawnSync("systemctl", ["--user", "is-active", "--quiet", label()], { stdio: "ignore" }).status === 0;
 }

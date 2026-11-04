@@ -1,7 +1,7 @@
 name: check
 on:
   push:
-    branches: [main]
+    branches: [main, windows]
   pull_request:
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ jobs:
   check:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -24,6 +24,7 @@ jobs:
           fetch-depth: 0
       # These jobs stay required on main, so a docs change runs them too and they pass without doing anything.
       - id: scope
+        shell: bash
         env:
           BEFORE: ${{ github.event.before }}
         run: sh scripts/ci-scope.sh >> "$GITHUB_OUTPUT"
@@ -41,5 +42,5 @@ jobs:
         run: npm run test:quick
       - if: steps.scope.outputs.scope == 'full'
         run: npm test
-      - if: steps.scope.outputs.scope != 'docs'
+      - if: steps.scope.outputs.scope != 'docs' && runner.os != 'Windows'
         run: sh scripts/install-smoke.sh

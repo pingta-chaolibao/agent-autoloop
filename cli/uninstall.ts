@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { HOME } from "../host/home.ts";
 import { removeService, stopUp } from "../host/service.ts";
+import { removeWindowsInstallation } from "./windows-uninstall.ts";
 
 const ROOT = path.join(import.meta.dirname, "..");
 
@@ -39,6 +40,10 @@ export async function uninstall(yes: boolean, ask: ((question: string) => Promis
   }
   removeService();
   stopUp();
+  if (process.platform === "win32" && removeWindowsInstallation(ROOT)) {
+    console.log(`卸载好了。规则、密钥和记录还留在 ${HOME}。`);
+    return;
+  }
   removeLinks();
   const installedApp = path.join(HOME, "app");
   if (existsSync(installedApp) && realpathSync(installedApp) === realpathSync(ROOT)) {

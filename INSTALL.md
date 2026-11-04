@@ -4,7 +4,9 @@
 
 ## 安装
 
-支持 macOS、Linux，暂不支持 Windows。需要 Node.js 24 或更新、Git、curl，以及一个已经登录的命令行 Agent。
+macOS、Linux 使用下面的 Shell 安装流程。此 Fork 的 Windows 原生版本使用 PowerShell 安装，见 [Windows 安装与维护](docs/windows.md)。需要 Node.js 24 或更新、Git，以及一个已经登录的命令行 Agent；Shell 安装另需 curl，Windows 需要系统内置的 Windows PowerShell 5.1 和 .NET Framework。
+
+Windows 从已提交的本地 Git 工作目录运行 `install.ps1 -Agent codex`；可用 `-Repo` 指定源仓库、`-Root` 指定程序位置、`-DataDirectory` 指定资料目录，`-NoService` 不注册常驻任务。它发布 Git HEAD 的固定副本，保留配置、密钥和记录，安装后同样运行 `--version`、`doctor` 和 `try`，回答后看到“试跑通过”才算完成。完整命令使用安装器打印的 PowerShell 入口。
 
 先检查 `node --version`。Homebrew 的 `node@24` 默认不进 PATH，装好后还要运行 `export PATH="$(brew --prefix node@24)/bin:$PATH"`；需要长期生效时再写入用户的 shell 配置。不要替用户登录，也不要读取或复制登录凭据。
 

@@ -7,6 +7,8 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 协议全文在 `docs/protocol.md`，这里是怎么做。程序在 `~/.agent-autoloop/app`，规则在 `~/.agent-autoloop/rules.json`，配置和密钥在 `~/.agent-autoloop/config.json`。
 
+Windows 原生安装见 `docs/windows.md`：程序位于安装根目录的 `releases/<提交>`，资料位置由 `AGENT_AUTOLOOP_HOME` 决定，命令使用安装器打印的 PowerShell 入口。用 `install.ps1 -Agent codex` 安装，仍按 INSTALL 的真实问答与续办验收；不要使用 WSL 替代用户要求的原生部署。Windows 更新发布本地 Windows 分支已提交的 HEAD，上游同步须先在源码工作目录完成。
+
 ## 看情况、回答
 
 `agent-autoloop status` 列出谁在线、等用户什么、在做什么、做过什么，还有按完成时间统计的今天和最近 7 天的轮数、Token 和费用（同一轮重试的已报用量相加，没上报的轮数会写出来）。`agent-autoloop answer <卡片> <序号>` 回答，`agent-autoloop resolve <卡片> <结果>` 结案，`agent-autoloop stop <第几轮>` 停掉一轮，等整个进程组退出才报告已停。

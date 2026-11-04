@@ -12,6 +12,8 @@ import { installService, removeService, serviceRunning } from "../host/service.t
 import { versionLine } from "../host/version.ts";
 import { spendLine } from "./spend.ts";
 import { attemptsOf, newFailure, waitingRetry } from "./try.ts";
+import { windowsInstallation } from "./windows-uninstall.ts";
+import { powershell } from "../host/windows.ts";
 
 const ROOT = path.join(import.meta.dirname, "..");
 const PROGRAM = path.join(ROOT, "bin", "agent-autoloop.ts");
@@ -108,12 +110,13 @@ function linkSkill() {
     const link = path.join(homedir(), agent, "skills", "agent-autoloop");
     if (lstatSync(link, { throwIfNoEntry: false })) continue;
     mkdirSync(path.dirname(link), { recursive: true });
-    symlinkSync(path.join(ROOT, "skills", "agent-autoloop"), link);
+    symlinkSync(path.join(ROOT, "skills", "agent-autoloop"), link, process.platform === "win32" ? "junction" : "dir");
   }
 }
 
 /** What to type to run this program: its name if that's what a shell finds, otherwise where it is. */
 function howToRun() {
+  if (process.platform === "win32") return `node "${PROGRAM}"`;
   const found = spawnSync("/bin/sh", ["-c", "command -v agent-autoloop"], { encoding: "utf8" }).stdout.trim();
   if (found && realpathSync(found) === realpathSync(PROGRAM)) return "agent-autoloop";
   return /\s/.test(PROGRAM) ? `'${PROGRAM}'` : PROGRAM;
@@ -525,6 +528,28 @@ function addPlugin(args: string[]) {
 }
 
 async function update() {
+  const installation = process.platform === "win32" ? windowsInstallation() : null;
+  if (installation) {
+    const args = [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      path.join(installation.source, "install.ps1"),
+      "-Repo",
+      installation.source,
+      "-Root",
+      installation.root,
+      "-DataDirectory",
+      HOME,
+      ...(!serviceRunning() ? ["-NoService"] : []),
+    ];
+    const installed = spawnSync(powershell, args, { stdio: "inherit", windowsHide: true });
+    if (installed.status !== 0) return fail("更新失败，当前配置和记录已保留。");
+    return;
+  }
   const pulled = spawnSync("git", ["-C", ROOT, "pull", "--ff-only"], { stdio: "inherit" });
   if (pulled.status !== 0) return fail("更新失败。");
   if (serviceRunning()) installService();
