@@ -1,7 +1,7 @@
 // Codex: the user's own, installed and signed in by them. A run is a `codex exec` in the background; its thread is kept
 // on disk, so a retry or an answer can go on in it, and the link opens it in the app.
 import { execFileSync } from "node:child_process";
-import { findProgram, tail, type Adapter } from "../../worker/agents.ts";
+import { programCommand, tail, type Adapter } from "../../worker/agents.ts";
 
 const SANDBOX = { read: "read-only", edit: "workspace-write", full: "danger-full-access" };
 const IN_THE_APP = [
@@ -11,8 +11,9 @@ const IN_THE_APP = [
 
 export default {
   command: (turn) => [
-    findProgram("codex", () => IN_THE_APP),
+    ...programCommand("codex", () => IN_THE_APP),
     "exec",
+    ...(process.platform === "win32" && turn.folder ? ["--add-dir", turn.folder] : []),
     ...(turn.resume ? ["resume"] : []),
     "--json",
     "--skip-git-repo-check",
@@ -66,11 +67,13 @@ export default {
   link: (session) => `codex://threads/${session}`,
   check() {
     try {
-      execFileSync(
-        findProgram("codex", () => IN_THE_APP),
-        ["login", "status"],
-        { encoding: "utf8", timeout: 20_000, stdio: ["ignore", "pipe", "pipe"] },
-      );
+      const [program, ...prefix] = programCommand("codex", () => IN_THE_APP);
+      execFileSync(program, [...prefix, "login", "status"], {
+        encoding: "utf8",
+        timeout: 20_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
       return null;
     } catch (error) {
       return `Codex 没有登录或用不了：运行 codex login（${(error as Error).message.split("\n")[0]}）`;

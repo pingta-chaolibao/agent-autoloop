@@ -16,6 +16,7 @@ import feishu, { render } from "../plugins/feishu/channel.ts";
 import webhook from "../plugins/webhook/channel.ts";
 import github from "../plugins/github/source.ts";
 import type { Card } from "../host/channels.ts";
+import { nodeCommand } from "./helpers.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "agent-autoloop-channels-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
@@ -59,9 +60,8 @@ test("feishu CLI calls leave the HTTP loop available", async () => {
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const lark = join(dir, "async-lark");
-  writeFileSync(
-    lark,
+  const lark = nodeCommand(
+    join(dir, "async-lark"),
     `#!${process.execPath}
 if (process.argv[2] === 'event') { setInterval(() => {}, 1000); }
 else {
@@ -72,7 +72,6 @@ else {
   })().catch(() => process.exit(1));
 }
 `,
-    { mode: 0o755 },
   );
   const stop = new AbortController();
   const cards = [base, { ...base, version: 2, ref: "om_5" }];
@@ -105,23 +104,22 @@ else {
 
 test("feishu: sends once per card, updates in place, reports failure, and only real clicks count", async () => {
   const log = join(dir, "lark.log");
-  const lark = join(dir, "lark-cli");
-  // A stand-in for lark-cli: records each call; `event consume` prints two clicks and waits to be stopped.
-  writeFileSync(
-    lark,
-    `#!/bin/sh
-echo "$*" >> "${log}"
-case "$*" in
-  *"event consume"*)
-    echo '{"action_value":"{\\"card\\":5,\\"choice\\":1}","operator_id":"ou_me","message_id":"om_5"}'
-    echo '{"action_value":"{\\"other\\":1}","operator_id":"ou_me","message_id":"om_5"}'
-    exec sleep 30 ;;
-  *fail-me*) exit 1 ;;
-  *) cat > /dev/null; echo '{"ok":true,"data":{"message_id":"om_5"}}' ;;
-esac
+  const lark = nodeCommand(
+    join(dir, "lark-cli"),
+    `#!${process.execPath}
+import fs from 'node:fs';
+const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(log)},args.join(' ')+'\\n');
+if(args[0]==='event') {
+ console.log(JSON.stringify({action_value:JSON.stringify({card:5,choice:1}),operator_id:'ou_me',message_id:'om_5'}));
+ console.log(JSON.stringify({action_value:JSON.stringify({other:1}),operator_id:'ou_me',message_id:'om_5'}));
+ setInterval(()=>{},1000);
+} else {
+ let body='';for await(const chunk of process.stdin)body+=chunk;
+ if(body.includes('fail-me'))process.exit(1);
+ console.log(JSON.stringify({ok:true,data:{message_id:'om_5'}}));
+}
 `,
   );
-  chmodSync(lark, 0o755);
   const stop = new AbortController();
   const cards: (Card | null)[] = [
     base,
@@ -149,14 +147,6 @@ esac
       return { changed: true };
     },
   };
-  // A card that can't be sent: lark-cli is told to fail by the words in it.
-  writeFileSync(
-    lark,
-    readFileSync(lark, "utf8").replace(
-      "*fail-me*) exit 1 ;;",
-      '*+messages-send*) body=$(cat); case "$body" in *fail-me*) exit 1 ;; esac; echo \'{"ok":true,"data":{"message_id":"om_5"}}\' ;;',
-    ),
-  );
   await feishu({ hub: hub as any, options: { user: "ou_me", lark }, log: () => {}, signal: stop.signal });
   const lines = readFileSync(log, "utf8").trim().split("\n");
   const sends = lines.filter((l) => l.includes("+messages-send"));

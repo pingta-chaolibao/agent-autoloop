@@ -27,7 +27,7 @@ process.exit(Number(process.env.BRIDGE_EXIT || 0));
     { mode: 0o755 },
   );
   const task = {
-    command: [command],
+    command: process.platform === "win32" ? [process.execPath, command] : [command],
     url: "https://example.com/页面",
     checks: ["核实标题", "保留字面量 $(touch SHOULD_NOT_EXIST) 和 `echo x`"],
     allowedActions: ["只读页面", "仅关闭本次新建的标签"],

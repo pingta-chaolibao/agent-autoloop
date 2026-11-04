@@ -6,6 +6,7 @@
 import { execFile, spawn } from "node:child_process";
 import readline from "node:readline";
 import type { Card, ChannelContext } from "../../host/channels.ts";
+import { programCommand } from "../../worker/agents.ts";
 
 function outcomeOf(card: Card) {
   const chosen = card.choice === null ? card.answer : card.options[card.choice];
@@ -48,10 +49,14 @@ export function render(card: Card) {
 
 export default async function feishu({ hub, options, log, signal }: ChannelContext) {
   const program = (options.lark as string | undefined) ?? "lark-cli";
+  const command = process.platform === "win32" ? programCommand(program) : [program];
   const lark = async (args: string[], input: string) => {
     const printed = await new Promise<string>((resolve, reject) => {
-      const child = execFile(program, args, { encoding: "utf8", timeout: 60_000, signal }, (error, stdout) =>
-        error ? reject(error) : resolve(stdout),
+      const child = execFile(
+        command[0],
+        [...command.slice(1), ...args],
+        { encoding: "utf8", timeout: 60_000, signal, windowsHide: true },
+        (error, stdout) => (error ? reject(error) : resolve(stdout)),
       );
       child.stdin!.on("error", reject);
       child.stdin!.end(input);
@@ -112,9 +117,14 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
   async function listen() {
     while (!signal.aborted) {
       // stdin stays open: lark-cli ends an unbounded consume when its stdin closes.
-      const consume = spawn(program, ["event", "consume", "card.action.trigger", "--as", "bot"], {
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const consume = spawn(
+        command[0],
+        [...command.slice(1), "event", "consume", "card.action.trigger", "--as", "bot"],
+        {
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+        },
+      );
       const stop = () => consume.kill();
       signal.addEventListener("abort", stop);
       readline.createInterface({ input: consume.stderr }).on("line", (line) => log(line));

@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 type Report = {
   task_id: string;
@@ -14,12 +14,24 @@ type Report = {
 type Table = { name: string; baseToken: string; tableId: string; fields: string[]; url: string };
 type Sources = { reportRule: string; reportUsers: string[]; tables: Table[] };
 class AuthorizationError extends Error {}
+let program = ["lark-cli"];
+if (process.platform === "win32") {
+  const found = spawnSync("where.exe", ["lark-cli"], { encoding: "utf8", windowsHide: true })
+    .stdout?.trim()
+    .split(/\r?\n/)[0];
+  if (found && /\.cmd$/i.test(found)) {
+    const script = /%dp0%[\\/]+([^"\r\n]+\.(?:m?js|cjs))"/i.exec(readFileSync(found, "utf8"))?.[1];
+    if (!script) throw new Error("飞书读取请使用官方 Node CLI 的 Windows 命令入口");
+    program = [process.execPath, resolve(dirname(found), script)];
+  } else if (found) program = [found];
+}
 
 function lark(args: string[]) {
-  const run = spawnSync("lark-cli", [...args, "--as", "user"], {
+  const run = spawnSync(program[0], [...program.slice(1), ...args, "--as", "user"], {
     encoding: "utf8",
     timeout: 60_000,
     maxBuffer: 16 * 1024 * 1024,
+    windowsHide: true,
   });
   if (run.error) throw run.error;
   const response = JSON.parse(run.status === 0 ? run.stdout : run.stderr);

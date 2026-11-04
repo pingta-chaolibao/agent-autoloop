@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { loadPlugin } from "../host/plugins.ts";
+import { windowsCommand } from "../host/windows.ts";
 import type { Usage } from "../protocol/validate.ts";
 
 export type { Usage } from "../protocol/validate.ts";
@@ -49,16 +50,25 @@ const found = new Map<string, string | null>();
 
 /** Where a program is: on the login shell's PATH (launchd and systemd start with a bare one), or in one of these. */
 export function findProgram(name: string, elsewhere: () => string[] = () => []) {
+  if (process.platform === "win32" && path.isAbsolute(name) && existsSync(name)) return name;
   if (!found.has(name)) {
     const shell = process.env.SHELL ?? "/bin/sh";
     let onPath: string | null = null;
     try {
-      const printed = execFileSync(shell, ["-lc", `command -v ${name}`], {
-        encoding: "utf8",
-        timeout: 15_000,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      onPath = printed.trim().split("\n").at(-1) || null;
+      const printed = execFileSync(
+        process.platform === "win32" ? "where.exe" : shell,
+        process.platform === "win32" ? [name] : ["-lc", `command -v ${name}`],
+        {
+          encoding: "utf8",
+          timeout: 15_000,
+          stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
+        },
+      );
+      const lines = printed.trim().split(/\r?\n/);
+      onPath =
+        (process.platform === "win32" ? lines.find((file) => /\.(exe|com|cmd|bat)$/i.test(file)) : lines.at(-1)) ||
+        null;
     } catch {}
     found.set(name, onPath ?? elsewhere().find(existsSync) ?? null);
   }
@@ -68,4 +78,9 @@ export function findProgram(name: string, elsewhere: () => string[] = () => []) 
 }
 
 /** The end of some output, for saying why something failed. */
+export function programCommand(name: string, elsewhere: () => string[] = () => []) {
+  const command = [findProgram(name, elsewhere)];
+  return process.platform === "win32" ? windowsCommand(command) : command;
+}
+
 export const tail = (text: string, length = 300) => text.trim().slice(-length);

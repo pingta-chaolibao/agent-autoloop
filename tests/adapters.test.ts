@@ -5,7 +5,7 @@
 // an application's browser connection.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { test } from "node:test";
 import { setup } from "./helpers.ts";
 
@@ -15,7 +15,11 @@ const { findProgram } = await import("../worker/agents.ts");
 const shell = process.env.SHELL;
 const lookup = join(setup("adapters"), "lookup.sh");
 writeFileSync(lookup, '#!/bin/sh\nprintf "%s\\n" /test/codex\n', { mode: 0o755 });
-process.env.SHELL = lookup;
+if (process.platform === "win32") {
+  writeFileSync(join(dirname(lookup), "codex-stub.js"), "");
+  writeFileSync(join(dirname(lookup), "codex.cmd"), '@node "%dp0%\\codex-stub.js" %*');
+  process.env.PATH = `${dirname(lookup)}${delimiter}${process.env.PATH}`;
+} else process.env.SHELL = lookup;
 findProgram("codex");
 if (shell === undefined) delete process.env.SHELL;
 else process.env.SHELL = shell;
@@ -41,7 +45,14 @@ const has = (argv: string[], ...parts: string[]) => {
 // The program itself is looked up once: these only care about what follows it.
 const stubbed = (adapter: Adapter, t: object) => {
   try {
-    return adapter.command({ ...turn, ...t });
+    const argv = adapter.command({ ...turn, ...t });
+    if (process.platform === "win32") {
+      // Windows npm shims add a Node entry point and a context directory; the assertions below concern CLI options.
+      if (argv[0] === process.execPath && /\.js$/.test(argv[1])) argv.splice(1, 1);
+      const extra = argv.indexOf("--add-dir");
+      if (extra !== -1) argv.splice(extra, 2);
+    }
+    return argv;
   } catch {
     return null;
   }

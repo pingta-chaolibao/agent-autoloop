@@ -1,8 +1,9 @@
 // What this machine is in the system: config.json, private to its owner. On a machine that runs everything it has all
 // of these; a machine that only does work has the hub's address and a worker's key.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { HOME } from "./home.ts";
+import { privateDirectory } from "./private.ts";
 
 export type ChannelConfig = { use?: string; key: string; [option: string]: unknown };
 export type Config = {
@@ -22,7 +23,7 @@ export function readConfig(): Config {
 }
 
 export function writeConfig(config: Config) {
-  mkdirSync(HOME, { recursive: true, mode: 0o700 });
+  privateDirectory(HOME);
   writeFileSync(`${CONFIG_FILE}.tmp`, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   renameSync(`${CONFIG_FILE}.tmp`, CONFIG_FILE);
 }

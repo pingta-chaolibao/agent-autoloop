@@ -26,6 +26,7 @@ import type { Job } from "../protocol/job.ts";
 import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
 import { promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
+import { launchWindows, stopWindows, windowsAlive } from "./windows.ts";
 
 const RUNS = path.join(HOME, "worker", "runs");
 const TIMEOUT_MINUTES = 180;
@@ -57,6 +58,7 @@ type Entry = {
   triedFresh: boolean;
   usage?: Usage;
   pid?: number;
+  processCreated?: string;
   launchedAt?: number;
   finishedAt?: number;
   told?: string;
@@ -86,7 +88,13 @@ function save(entry: Entry) {
 function agentEnvironment(entry: Entry) {
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(process.env)) {
-    if (/^(AGENT_AUTOLOOP_|CLAUDECODE$|CLAUDE_CODE_|CODEX_(?!HOME$))/.test(name)) continue;
+    if (
+      (process.platform === "win32"
+        ? /^(AGENT_AUTOLOOP_|CLAUDECODE$|CLAUDE_CODE_|CODEX_(?!HOME$))/i
+        : /^(AGENT_AUTOLOOP_|CLAUDECODE$|CLAUDE_CODE_|CODEX_(?!HOME$))/
+      ).test(name)
+    )
+      continue;
     env[name] = value;
   }
   return {
@@ -107,6 +115,8 @@ const quoted = (word: string) => `'${word.replaceAll("'", `'\\''`)}'`;
 const marker = (entry: Entry) => `agent-autoloop-run:${entry.run}:${entry.attempt}:${entry.turn}`;
 
 function alive(entry: Entry) {
+  if (process.platform === "win32")
+    return windowsAlive(entry.pid, entry.dir, entry.turn, marker(entry), entry.processCreated);
   if (!entry.pid) return false;
   try {
     const command = execFileSync("ps", ["-p", String(entry.pid), "-o", "command="], { encoding: "utf8" });
@@ -117,12 +127,16 @@ function alive(entry: Entry) {
 }
 
 function signal(entry: Entry, name: NodeJS.Signals) {
+  if (process.platform === "win32")
+    return stopWindows(entry.pid, entry.dir, entry.turn, marker(entry), name === "SIGKILL", entry.processCreated);
   try {
     if (entry.pid) process.kill(-entry.pid, name);
   } catch {}
 }
 
 function groupAlive(entry: Entry) {
+  if (process.platform === "win32")
+    return windowsAlive(entry.pid, entry.dir, entry.turn, marker(entry), entry.processCreated);
   // The wrapper can die before a child; zombies have already stopped and only their parent can reap them.
   return execFileSync("ps", ["-ax", "-o", "pgid=", "-o", "stat="], { encoding: "utf8" })
     .trim()
@@ -179,11 +193,12 @@ export function createWorker({
     entry.launchedAt = now();
     delete entry.finishedAt;
     delete entry.pid;
+    delete entry.processCreated;
     delete entry.stopping;
     delete entry.why;
     save(entry);
     const { rule, agent } = entry.job;
-    const cwd = rule.cwd.replace(/^~(?=\/)/, homedir());
+    const cwd = rule.cwd.replace(/^~(?=[/\\])/, homedir());
     const turn: Turn = {
       prompt,
       session: entry.session,
@@ -198,6 +213,14 @@ export function createWorker({
     };
     if (!existsSync(cwd)) throw new Error(`在 ${cwd} 启动不了：这个目录不存在`);
     const argv = adapter.command(turn);
+    if (process.platform === "win32") {
+      const launched = launchWindows(entry.dir, entry.turn, argv, cwd, agentEnvironment(entry), marker(entry), log);
+      entry.pid = launched.pid;
+      entry.processCreated = launched.created;
+      save(entry);
+      log(`run ${entry.run} (${rule.name}) turn ${entry.turn} started, pid ${entry.pid}`);
+      return;
+    }
     const { out, err, exit, command } = files(entry);
     // Login shells don't agree on how a command reads its arguments (fish has no $0 or $@), so the command waits in a
     // file for /bin/sh. Its path travels by environment because the install path can hold any character.

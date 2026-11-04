@@ -16,8 +16,8 @@ const write = (name: string, text: string) => {
   mkdirSync(join(root, name, ".."), { recursive: true });
   writeFileSync(join(root, name), text);
 };
-const commit = () => {
-  git("add", "-A");
+const commit = (stage = true) => {
+  if (stage) git("add", "-A");
   git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "test");
   return git("rev-parse", "HEAD");
 };
@@ -56,12 +56,23 @@ test("release scope compares the entire healthy-live range and both sides of ren
 test("executable or symlink documents and unknown history always need release", () => {
   for (const mode of ["executable", "symlink"]) {
     git("reset", "--hard", base);
-    if (mode === "executable") chmodSync(join(root, "docs/a.md"), 0o755);
+    if (process.platform === "win32") {
+      // These checks read Git objects, so stage their exact modes even when Windows cannot create POSIX links/modes.
+      if (mode === "executable") git("update-index", "--chmod=+x", "docs/a.md");
+      else {
+        const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], {
+          cwd: root,
+          encoding: "utf8",
+          input: "../app.ts",
+        }).trim();
+        git("update-index", "--cacheinfo", `120000,${blob},docs/a.md`);
+      }
+    } else if (mode === "executable") chmodSync(join(root, "docs/a.md"), 0o755);
     else {
       rmSync(join(root, "docs/a.md"));
       symlinkSync("../app.ts", join(root, "docs/a.md"));
     }
-    assert.equal(releaseRequired(root, base, commit(), config.internal), true);
+    assert.equal(releaseRequired(root, base, commit(process.platform !== "win32"), config.internal), true);
   }
   assert.equal(releaseRequired(root, "0".repeat(40), base, config.internal), true);
   git("reset", "--hard", base);

@@ -3,6 +3,8 @@
 //   "channels": { "desktop": { "key": "…" } } in config.json
 //   "channels": { "desktop": { "name": "桌面通知" } } in rules.json
 import { execFile, spawnSync } from "node:child_process";
+import path from "node:path";
+import { nativeWindows } from "../../host/windows.ts";
 import type { Card, ChannelContext } from "../../host/channels.ts";
 
 const WORDS = "运行 agent-autoloop status 查看";
@@ -15,11 +17,17 @@ const APPLESCRIPT = ["on run argv", "display notification (item 2 of argv) with 
  */
 export function notifyCommand(title: string, platform: string = process.platform): [string, string[]] {
   const body = `${title}\n${WORDS}`;
+  if (platform === "win32")
+    return [
+      process.execPath,
+      ["--disable-warning=ExperimentalWarning", path.join(import.meta.dirname, "windows.ts"), TITLE, body],
+    ];
   if (platform === "darwin") return ["osascript", [...APPLESCRIPT.flatMap((line) => ["-e", line]), "--", TITLE, body]];
   return ["notify-send", ["--", TITLE, body]];
 }
 
 function hasDesktop() {
+  if (process.platform === "win32") return nativeWindows("desktop") === "yes";
   if (process.platform === "darwin") {
     return spawnSync("launchctl", ["print", `gui/${process.getuid!()}`], { stdio: "ignore" }).status === 0;
   }
