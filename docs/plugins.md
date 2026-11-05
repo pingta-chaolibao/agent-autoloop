@@ -120,3 +120,11 @@ node --disable-warning=ExperimentalWarning --test tests/conformance.test.ts
 检查其他中台实现时，用 `agent-autoloop conformance <测试地址> --config <测试凭据文件>`，文件格式见[协议](protocol.md#一致性和复现)。它会写事件和卡片，只对专用测试中台运行。
 
 插件本身的完整接入测试见 [tests/example-plugins.test.ts](../tests/example-plugins.test.ts)。用其他语言写独立进程也可以，参考 [curl/jq 通道](../examples/channel.sh)和[接单程序](../examples/worker.sh)。
+
+## 附件与队列扩展
+
+本人通过 POST /v1/queue/reorder 调整完整队列，Worker 仍通过原领活接口取得下一项；来源和通道不能修改队列。队列状态可从 /v1/state 的 queues 读取，具体冲突和并发语义见 [协议](protocol.md#队列顺序与媒体附件)。
+
+通道上下文新增可选 directory，作为外壳为该通道分配的私有缓存目录。Card.artifacts 是附件元数据数组，hub.cardAsset(card, id) 下载有权查看的文件。原来的文字插件无需修改；需要媒体时不要把本机绝对路径或中台密钥放进消息链接。
+
+图片与影片输入在 Job.rule.attachments，接单程序负责下载与本地路径映射；支持图片的 Agent 插件可从 turn.images 取得实际图片路径。结果文件放在本轮 outputs 目录，由接单程序上传，业务结果先持久保存，附件传送失败不重新执行 Agent。

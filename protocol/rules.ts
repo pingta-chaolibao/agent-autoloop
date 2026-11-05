@@ -3,6 +3,7 @@
 // message saying where: at start it stops the hub, later it leaves the old rules running and the owner is told.
 import { nextRun, parseCron } from "../kernel/cron.ts";
 import { SCHEDULE, type Rule, type Rules } from "../kernel/rules.ts";
+import { validAssets } from "./media.ts";
 
 export class RulesError extends Error {
   readonly issues: string[];
@@ -78,6 +79,7 @@ function checkRule(issues: string[], rules: Rules, rule: Rule, names: Set<string
     ],
     ["skill", isText, NOT_EMPTY, true],
     ["prompt", isText, NOT_EMPTY, true],
+    ["attachments", validAssets, "要是最多 10 个有效图片或影片附件", true],
     ["group", isText, NOT_EMPTY, true],
     ["parallel", isCount, "要是正整数", true],
     ["tell", (value) => TELLS.includes(value as string), `只能是 ${TELLS.join("、")}`, true],

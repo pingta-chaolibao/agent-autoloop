@@ -1,6 +1,7 @@
 // The protocol's own checks, with no state behind them: the hub applies them at its door, and a worker applies them to
 // an Agent's receipt before handing it in, while the Agent can still be asked to write it again.
 import { InputError } from "../kernel/errors.ts";
+import { parseAssets, type Asset } from "./media.ts";
 
 export const EVENT_TYPE = /^[a-z][a-z0-9_.-]{0,63}$/;
 export type Later = { key: string; at?: string; about?: string; cancel?: boolean };
@@ -22,6 +23,8 @@ export type Result = {
   error?: string;
   session?: string;
   usage?: Usage;
+  artifacts?: Asset[];
+  artifactError?: string;
   ask?: Ask[];
   notice?: Notice[];
   resolve?: { card: number; reason: string }[];
@@ -146,7 +149,20 @@ export function parseResult(input: unknown): Result {
   }
   const result = { ...input } as Item;
   if (
-    !only(result, ["outcome", "summary", "error", "session", "usage", "ask", "notice", "resolve", "later", "events"])
+    !only(result, [
+      "outcome",
+      "summary",
+      "error",
+      "session",
+      "usage",
+      "artifacts",
+      "artifactError",
+      "ask",
+      "notice",
+      "resolve",
+      "later",
+      "events",
+    ])
   ) {
     throw new InputError("结果里有不认识的字段");
   }
@@ -157,6 +173,8 @@ export function parseResult(input: unknown): Result {
     throw new InputError("summary、error、session 最多 500 字");
   }
   if (!validUsage(result.usage)) throw new InputError("usage 要是对象，里面要是有限的非负数字");
+  if (result.artifacts !== undefined) result.artifacts = parseAssets(result.artifacts);
+  if (!optional(result.artifactError, 1000)) throw new InputError("artifactError 最多 1000 字");
   if (!listOf(result.ask, 5, validAsk)) {
     throw new InputError("ask 每一项要有 title、text 和 2 到 5 个 options，recommend 是其中一个的序号，最多 5 项");
   }

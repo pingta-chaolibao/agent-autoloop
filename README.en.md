@@ -165,7 +165,7 @@ Built-in plugins ship with the program and are enabled through configuration. Us
 
 ## Four kernel mechanisms
 
-The kernel is about 1,650 lines with zero runtime dependencies. It reads no clock, uses no randomness, and makes no outbound requests; plugins connect in, and credentials stay with the plugins that use them. Identical inputs always give identical results. It brings four proven systems patterns to command-line agents:
+The kernel is about 1,750 lines with zero runtime dependencies. It reads no clock, uses no randomness, and makes no outbound requests; plugins connect in, and credentials stay with the plugins that use them. Identical inputs always give identical results. It brings four proven systems patterns to command-line agents:
 
 - **Zero-cost wait**: The process exits while waiting for your call, and the waiting state lives in SQLite, so the agent does not stay alive. If you reply three days later, no agent process runs and no tokens are spent in the meantime — only the lightweight hub waits in the background; your answer resumes the original conversation.
 - **Event sourcing**: All state is derived from an append-only fact log, committed in the same SQLite transaction as its indexes before the hub replies. Confirmed facts survive `SIGKILL` (whole-machine power loss is not separately tested), every run can be traced with a single command, and format changes rebuild from the log without migration scripts.
@@ -248,3 +248,9 @@ Start reading at `bin/agent-autoloop.ts` → `cli/main.ts`, then follow the feat
 </details>
 
 [MIT License](LICENSE)
+
+### Queue ordering and media
+
+The owner can prioritize and reorder queued runs for one worker. The order is recorded in the fact log, while retry cooldowns, active runs and concurrency limits remain authoritative. Clients use the queue endpoint rather than changing a card's execution state.
+
+Rules may reference uploaded PNG, JPEG, WebP and MP4 inputs. Workers download these into the private run folder; supported agents receive actual images and video files with an optional first-frame preview. Media placed in the run's outputs directory is uploaded as result artifacts and can be sent through Lark. See the [queue and media protocol](docs/protocol.md#队列顺序与媒体附件) for limits and compatibility.

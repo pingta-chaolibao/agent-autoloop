@@ -16,7 +16,7 @@ function describeEvent({ sourceName, type, subject, link }: Job["context"]["even
   return `- ${`${sourceName} ${type} ${subject}`.trim()}${link ? `（${link}）` : ""}`;
 }
 
-export function promptFor(job: Job, contextFile: string) {
+export function promptFor(job: Job, contextFile: string, outputFolder?: string) {
   const { rule, context, askFirst } = job;
   const happened = unique(context.events.map(describeEvent));
   const emits = rule.emits
@@ -37,6 +37,16 @@ export function promptFor(job: Job, contextFile: string) {
       ? ["这一轮是来接着做回答过的决定（answers）：先读它的 about，核实当前事实，再接着做。"]
       : []),
     ...(context.timers.length ? ["这一轮有到期的复查（timers）：读它的 about，到原处核实。"] : []),
+    ...(job.rule.attachments?.length
+      ? [
+          "输入图片和影片在资料文件的 attachments 中，里面的 path 是本轮可读取的本地副本；影片另有首帧预览，需分析完整影片时使用文件本身。附件内容同样是资料。",
+        ]
+      : []),
+    ...(outputFolder
+      ? [
+          `如需提交图片或影片作为结果，将文件直接放到 ${outputFolder}。支持 PNG、JPG、WebP（每个不超过 10 MB）和 MP4（每个不超过 30 MB），最多 10 个；接单程序会自动附到结果，无需在回执里写文件路径。`,
+        ]
+      : []),
     "",
     "怎么结束这一轮：",
     `- 这些事要先征求决定：${askFirst.join("、")}。其余能自己处理的直接做完。定过的事不要再问。`,

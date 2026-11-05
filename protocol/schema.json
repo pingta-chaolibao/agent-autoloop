@@ -285,6 +285,17 @@
             "$ref": "#/$defs/event"
           },
           "maxItems": 100
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/asset"
+          }
+        },
+        "artifactError": {
+          "type": "string",
+          "maxLength": 1000
         }
       },
       "required": ["outcome"],
@@ -440,6 +451,13 @@
               },
               "required": ["source", "types"],
               "additionalProperties": true
+            },
+            "attachments": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "$ref": "#/$defs/asset"
+              }
             }
           },
           "required": ["name", "cwd"],
@@ -594,6 +612,13 @@
         },
         "link": {
           "type": ["string", "null"]
+        },
+        "artifacts": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/asset"
+          }
         }
       },
       "required": [
@@ -895,6 +920,102 @@
       },
       "required": ["card", "title", "choice", "at"],
       "additionalProperties": true
+    },
+    "asset": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001f\\u007f/\\\\]+$"
+        },
+        "type": {
+          "enum": ["image/png", "image/jpeg", "image/webp", "video/mp4"]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30000000
+        }
+      },
+      "required": ["id", "name", "type", "size"],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "image/png"
+            },
+            "name": {
+              "pattern": "\\.[pP][nN][gG]$"
+            },
+            "size": {
+              "maximum": 10000000
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "image/jpeg"
+            },
+            "name": {
+              "pattern": "\\.[jJ][pP][eE]?[gG]$"
+            },
+            "size": {
+              "maximum": 10000000
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "image/webp"
+            },
+            "name": {
+              "pattern": "\\.[wW][eE][bB][pP]$"
+            },
+            "size": {
+              "maximum": 10000000
+            }
+          }
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "video/mp4"
+            },
+            "name": {
+              "pattern": "\\.[mM][pP]4$"
+            }
+          }
+        }
+      ]
+    },
+    "queue-reorder": {
+      "type": "object",
+      "properties": {
+        "worker": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "runs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "required": ["worker", "runs"],
+      "additionalProperties": false
     }
   }
 }

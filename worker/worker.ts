@@ -27,6 +27,7 @@ import { addUsage, type Notice, type Result } from "../protocol/validate.ts";
 import { adapterFor, type Adapter, type Reading, type Turn, type Usage } from "./agents.ts";
 import { promptFor, readMessage, repairPrompt, resultFrom } from "./contract.ts";
 import { launchWindows, stopWindows, windowsAlive } from "./windows.ts";
+import { prepareMedia, collectMedia } from "./media.ts";
 
 const RUNS = path.join(HOME, "worker", "runs");
 const TIMEOUT_MINUTES = 180;
@@ -65,8 +66,10 @@ type Entry = {
   stopping?: number;
   why?: "cancel" | "timeout" | "finished";
   result?: Result;
+  images?: string[];
+  mediaPrepared?: boolean;
 };
-export type WorkerHub = Pick<Hub, "work" | "started" | "result">;
+export type WorkerHub = Pick<Hub, "work" | "started" | "result"> & Partial<Pick<Hub, "inputAsset" | "uploadAsset">>;
 export type WorkerOptions = {
   hub: WorkerHub;
   name: string;
@@ -210,6 +213,7 @@ export function createWorker({
       command: agent.command,
       contextFile: path.join(entry.dir, "context.json"),
       folder: entry.dir,
+      images: entry.repairs ? [] : entry.images,
     };
     if (!existsSync(cwd)) throw new Error(`在 ${cwd} 启动不了：这个目录不存在`);
     const argv = adapter.command(turn);
@@ -277,9 +281,15 @@ export function createWorker({
     // Kept before anything slow: a worker stopped from here on still has the job.
     save(entry);
     try {
-      writeFileSync(path.join(dir, "context.json"), JSON.stringify(job.context, null, 2), { mode: 0o600 });
+      const media = await prepareMedia(hub, job, dir);
+      entry.images = media.images;
+      writeFileSync(
+        path.join(dir, "context.json"),
+        JSON.stringify({ ...job.context, attachments: media.attachments }, null, 2),
+        { mode: 0o600 },
+      );
       const adapter = await adapterFor(job.agent.use);
-      entry.prompt = promptFor(job, path.join(dir, "context.json"));
+      entry.prompt = promptFor(job, path.join(dir, "context.json"), media.outputFolder);
       save(entry);
       launch(entry, adapter, entry.prompt);
     } catch (error) {
@@ -369,11 +379,18 @@ export function createWorker({
     }
     if (entry.turn === 0) {
       // The worker stopped while starting it, before anything was launched.
-      if (!entry.prompt) entry.prompt = promptFor(entry.job, path.join(entry.dir, "context.json"));
       try {
-        writeFileSync(path.join(entry.dir, "context.json"), JSON.stringify(entry.job.context, null, 2), {
-          mode: 0o600,
-        });
+        const media = await prepareMedia(hub, entry.job, entry.dir);
+        entry.images = media.images;
+        if (!entry.prompt)
+          entry.prompt = promptFor(entry.job, path.join(entry.dir, "context.json"), media.outputFolder);
+        writeFileSync(
+          path.join(entry.dir, "context.json"),
+          JSON.stringify({ ...entry.job.context, attachments: media.attachments }, null, 2),
+          {
+            mode: 0o600,
+          },
+        );
         return launch(entry, adapter, entry.prompt);
       } catch (error) {
         return endWith(entry, { outcome: "failed", error: String((error as Error).message ?? error).slice(0, 500) });
@@ -430,6 +447,15 @@ export function createWorker({
   async function settle(entry: Entry) {
     if (!entry.result) return;
     try {
+      if (!entry.mediaPrepared) {
+        if (entry.result.outcome !== "cancelled") {
+          const media = await collectMedia(hub, entry.job, entry.dir);
+          if (media.artifacts.length) entry.result.artifacts = media.artifacts;
+          if (media.issues.length) entry.result.artifactError = media.issues.join("；").slice(0, 1000);
+        }
+        entry.mediaPrepared = true;
+        save(entry);
+      }
       const answer = await hub.result(entry.run, entry.token, entry.result);
       for (const item of answer?.rejected ?? []) log(`run ${entry.run}: not applied: ${JSON.stringify(item)}`);
       log(`run ${entry.run}: ${entry.result.outcome}`);

@@ -21,6 +21,10 @@ CREATE TABLE runs (
   grp TEXT NOT NULL,
   lane TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL,
+  queue_order INTEGER,
+  attachments TEXT,
+  artifacts TEXT,
+  artifact_error TEXT,
   attempts INTEGER NOT NULL DEFAULT 0,
   not_before TEXT NOT NULL,
   claim TEXT,
@@ -48,6 +52,7 @@ CREATE TABLE run_events (
 
 CREATE TABLE cards (
   id INTEGER PRIMARY KEY,
+  artifacts TEXT,
   key TEXT NOT NULL,
   kind TEXT NOT NULL,
   title TEXT NOT NULL,

@@ -220,6 +220,10 @@ async function route(call: Call): Promise<Response> {
     return json(act(call, "ingest", requireKey(call, "source"), await readJson(request)));
   }
   if (method === "POST" && path === "/v1/tell") return tell(call);
+  if (method === "POST" && path === "/v1/queue/reorder") {
+    requireKey(call, "owner");
+    return json(act(call, "reorderQueue", await readJson(request)));
+  }
   if (method === "GET" && path === "/v1/work") return work(call);
   const [, runPart, action] = /^\/v1\/runs\/([1-9][0-9]*)\/(started|result|cancel|why)$/.exec(path) ?? [];
   const runId = Number(runPart);

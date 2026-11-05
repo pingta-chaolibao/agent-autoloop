@@ -1,5 +1,6 @@
 // What the kernel reads in rules: their shape and which events a rule takes. The rules file is checked before it gets
 // here, in protocol/rules.ts.
+import type { Asset } from "../protocol/media.ts";
 export type Access = "read" | "edit" | "full";
 export type Source = { name: string; adapter?: string };
 type AgentOptions = { model?: string; effort?: string; command?: string[]; timeout?: number };
@@ -8,7 +9,7 @@ export type Channel = { name: string; answerers?: string[]; links?: boolean };
 export type Tell = "always" | "needed" | "never";
 type EventFilter = { source: string; types: string[] };
 type When = EventFilter | { cron: string };
-type RuleOptions = { skill?: string; prompt?: string; parallel?: number; emits?: EventFilter };
+type RuleOptions = { skill?: string; prompt?: string; parallel?: number; emits?: EventFilter; attachments?: Asset[] };
 /** Without parallel a rule's group runs one at a time; with it, each subject is its own thread, that many at once. */
 export type Rule = RuleOptions & { name: string; when: When; to: string; cwd: string; group: string; tell: Tell };
 /** A scheduled task that runs elsewhere (say, in the Claude app): the hub neither starts nor records it. */

@@ -1,5 +1,7 @@
 // A hub, from the outside: how a worker, a channel or the command line reaches it. Nothing here is more than an HTTP
 // request, which is the whole of what it takes to plug into the hub.
+import type { Asset } from "./media.ts";
+
 export class HubError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -10,6 +12,22 @@ export class HubError extends Error {
 
 export function hubClient(url: string, key: string) {
   const base = url.replace(/\/$/, "");
+  async function assetRequest(route: string, token = key, file?: { name: string; type: string; bytes: Uint8Array }) {
+    const response = await fetch(base + route, {
+      method: file ? "POST" : "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(file && { "content-type": file.type, "x-file-name": encodeURIComponent(file.name) }),
+      },
+      ...(file && { body: new Uint8Array(file.bytes) }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      const error = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new HubError(response.status, error.error ?? `附件请求返回 ${response.status}`);
+    }
+    return response;
+  }
   async function call(
     method: string,
     path: string,
@@ -38,6 +56,15 @@ export function hubClient(url: string, key: string) {
     started: (run: number, token: string, body: { session?: string; link?: string }) =>
       call("POST", `/v1/runs/${run}/started`, { token, body }),
     result: (run: number, token: string, body: unknown) => call("POST", `/v1/runs/${run}/result`, { token, body }),
+    inputAsset: async (run: number, token: string, id: string) =>
+      new Uint8Array(await (await assetRequest(`/v1/runs/${run}/assets/${id}`, token)).arrayBuffer()),
+    uploadAsset: async (
+      run: number,
+      token: string,
+      file: { name: string; type: string; bytes: Uint8Array },
+    ): Promise<Asset> => (await assetRequest(`/v1/runs/${run}/assets`, token, file)).json(),
+    cardAsset: async (card: number, id: string) =>
+      new Uint8Array(await (await assetRequest(`/v1/cards/${card}/assets/${id}`)).arrayBuffer()),
     // The channel's door.
     nextCard: (wait: number) => call("GET", `/v1/cards/next?wait=${wait}`, { timeout: wait + 30 }),
     delivered: (card: number, version: number, ref: string | null) =>
@@ -54,6 +81,7 @@ export function hubClient(url: string, key: string) {
       call("DELETE", `/v1/keys/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`),
     state: (before?: number) => call("GET", before === undefined ? "/v1/state" : `/v1/state?before=${before}`),
     cancel: (run: number) => call("POST", `/v1/runs/${run}/cancel`, { body: {} }),
+    reorderQueue: (worker: string, runs: number[]) => call("POST", "/v1/queue/reorder", { body: { worker, runs } }),
     resolve: (card: number, reason: string) => call("POST", `/v1/cards/${card}/resolve`, { body: { reason } }),
   };
 }

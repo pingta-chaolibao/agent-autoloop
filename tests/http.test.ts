@@ -369,3 +369,18 @@ test("there's no other page: what's going on is read through the doors", async (
   for (const path of ["/", "/index.html", "/app.js", "/style.css", "/../package.json"])
     assert.equal((await call(path)).status, 404, path);
 });
+
+test("only the owner may reorder a current worker queue; stale or forged snapshots conflict", async () => {
+  const state = (await call("/v1/state", { key: keys.owner })).json;
+  const queue = state.queues.find((queue: any) => queue.worker === "w1") ?? { worker: "w1", runs: [] };
+  for (const key of [keys.app, keys.w1, keys.chat]) {
+    assert.equal((await call("/v1/queue/reorder", { key, body: queue })).status, 401);
+  }
+  assert.equal((await call("/v1/queue/reorder", { key: "made-up", body: queue })).status, 401);
+  assert.equal((await call("/v1/queue/reorder", { key: keys.owner, body: queue })).status, 200);
+  assert.equal(
+    (await call("/v1/queue/reorder", { key: keys.owner, body: { worker: "w1", runs: [999999] } })).status,
+    409,
+  );
+  assert.equal((await call("/v1/queue/reorder", { key: keys.owner, body: { ...queue, state: "done" } })).status, 400);
+});

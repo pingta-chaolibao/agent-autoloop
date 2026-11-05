@@ -23,6 +23,7 @@ export type Turn = {
   command?: string[];
   contextFile: string;
   folder: string;
+  images?: string[];
 };
 export type Reading = { text?: string; session?: string; usage?: Usage; error?: string; finished?: boolean };
 export type Adapter = {

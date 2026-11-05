@@ -12,6 +12,8 @@ import {
   eventsOf,
   jobOf,
   openInScope,
+  queueOrder,
+  queueWorker,
   sourceOf,
   waitingOn,
   workerOf,
@@ -96,7 +98,12 @@ function assignQueued(draft: Draft, run: Row) {
   const rule = (config.value as Rules).rules.find((rule) => rule.name === run.rule);
   if (!rule) return;
   const session = rule.to === run.agent ? {} : nulls("session", "resume");
-  put(draft, "runs", run.id, { agent: rule.to, rules_version: config.version, ...session });
+  put(draft, "runs", run.id, {
+    agent: rule.to,
+    rules_version: config.version,
+    attachments: JSON.stringify(rule.attachments ?? []),
+    ...session,
+  });
 }
 const threadOf = (run: Row) => ({ rule: run.rule, lane: run.lane, grp: run.grp });
 const hopsOf = (draft: Draft, run: Row) => Math.max(0, ...eventsOf(draft.view, run.id).map((event) => event.hops ?? 0));
@@ -136,7 +143,12 @@ const notify = (draft: Draft, key: string, title: string, text: string, extra: R
 function enqueue(draft: Draft, rule: Rule, event: number, subject: string, resume?: string | null) {
   const lane = rule.parallel ? subject : "";
   const rulesVersion = draft.view.get("config", "rules")!.version;
-  const stamps = { not_before: draft.at, created_at: draft.at, rules_version: rulesVersion };
+  const stamps = {
+    not_before: draft.at,
+    created_at: draft.at,
+    rules_version: rulesVersion,
+    attachments: JSON.stringify(rule.attachments ?? []),
+  };
   const isSameQueued = (run: Row) => run.rule === rule.name && run.lane === lane && run.state === "queued";
   const run =
     rows(draft.view, "runs", { rule: rule.name, lane, state: "queued" }).find(isSameQueued) ??
@@ -194,7 +206,13 @@ function cardFromReceipt(draft: Draft, run: Row, kind: string, card: Row) {
   const name = card.key ?? digest(`${card.title}\n${card.text}`).slice(0, 32);
   const session = draft.view.get("runs", run.id)!.session;
   const quiet = kind === "notice" && ruleNamed(draft, run.rule)?.tell === "never";
-  const origin = { source: sourceOf(draft.view, run.id), agent: run.agent, session, run: run.id };
+  const origin = {
+    source: sourceOf(draft.view, run.id),
+    agent: run.agent,
+    session,
+    run: run.id,
+    artifacts: draft.view.get("runs", run.id)!.artifacts ?? "[]",
+  };
   const key = `thread:${run.rule}:${run.lane}:${name}`;
   createCard(draft, { ...card, hops: hopsOf(draft, run), key, kind, quiet, ...threadOf(run), ...origin });
 }
@@ -245,7 +263,7 @@ function claimNext(draft: Draft, worker: string, claim: string) {
     claimed.filter((other) => other.grp === run.grp).length < groupLimit(run.grp);
   // The same claim again means the answer got lost: it gets back the run it already has.
   const held = claimed.find((run) => run.claim === claim && workerOf(draft.view, run) === worker);
-  const run = held ?? runs.find(claimable);
+  const run = held ?? runs.toSorted(queueOrder).find(claimable);
   if (!run) return null;
   if (!held) assignQueued(draft, run);
   const since = held ? { claimed_at: run.claimed_at, link: run.link } : { claimed_at: draft.at, link: null };
@@ -262,7 +280,15 @@ function retryLater(draft: Draft, run: Row, result: Result) {
   const notBefore = draft.now + Math.min(5 * MINUTE * 2 ** (attempts - 1), 60 * MINUTE);
   const error = (result.error ?? "").trim().replace(/[。.]+$/, "") || "没说原因";
   const unclaimed = nulls("claim", "claimed_at", "seen_at", "cancel_at");
-  put(draft, "runs", id, { state: "queued", attempts, not_before: iso(notBefore), error, ...unclaimed });
+  put(draft, "runs", id, {
+    state: "queued",
+    attempts,
+    not_before: iso(notBefore),
+    error,
+    artifacts: JSON.stringify(result.artifacts ?? []),
+    artifact_error: result.artifactError ?? null,
+    ...unclaimed,
+  });
   const sameThread = (other: Row) => other.id !== id && other.rule === run.rule && other.lane === run.lane;
   for (const other of rows(draft.view, "runs", { rule: run.rule, lane: run.lane, state: "queued" }).filter(
     sameThread,
@@ -311,7 +337,15 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
   const rule = ruleNamed(draft, run.rule);
   const summary = result.summary ?? "";
   const rejected: Rejected[] = [];
-  put(draft, "runs", id, { state: result.outcome, finished_at: draft.at, summary, error: null, cancel_at: null });
+  put(draft, "runs", id, {
+    state: result.outcome,
+    finished_at: draft.at,
+    summary,
+    error: null,
+    cancel_at: null,
+    artifacts: JSON.stringify(result.artifacts ?? []),
+    artifact_error: result.artifactError ?? null,
+  });
   closeOpen(draft, (key) => key === `run:${id}:failing`, "后来跑成了");
   closeOpen(draft, (key) => key === `run:${id}:unknown`, "结果回来了");
   const eventIds = eventsOf(draft.view, id).map((event) => event.id);
@@ -327,8 +361,21 @@ function applyReceipt(draft: Draft, run: Row, result: Result) {
   for (const ask of result.ask ?? []) cardFromReceipt(draft, run, "ask", ask);
   for (const notice of result.notice ?? []) cardFromReceipt(draft, run, "notice", notice);
   if (rule?.tell === "always" && result.outcome === "done") {
-    const once = { fyi: true, once: true, ...threadOf(run), source: sourceOf(draft.view, id), run: id };
-    notify(draft, `run:${id}:done`, run.rule, summary, once);
+    const once = {
+      fyi: true,
+      once: true,
+      ...threadOf(run),
+      source: sourceOf(draft.view, id),
+      run: id,
+      artifacts: JSON.stringify(result.artifacts ?? []),
+    };
+    notify(
+      draft,
+      `run:${id}:done`,
+      run.rule,
+      summary + (result.artifactError ? `\n\n结果附件：${result.artifactError}` : ""),
+      once,
+    );
   }
   for (const later of result.later ?? []) scheduleReview(draft, run, later);
   for (const event of result.events ?? []) {
@@ -463,6 +510,34 @@ const HANDLERS: Record<string, (draft: Draft, ...args: any[]) => unknown> = {
     void put(draft, "keys", `${kind}:${name}`, { kind, name, hash, created_at: draft.at }),
   removeKey: (draft, kind, name) => void set(draft, "keys", `${kind}:${name}`, null),
   ingest,
+  reorderQueue(draft, given) {
+    if (
+      !given ||
+      typeof given !== "object" ||
+      Array.isArray(given) ||
+      Object.keys(given).some((key) => !["worker", "runs"].includes(key)) ||
+      typeof given.worker !== "string" ||
+      !/^[a-z][a-z0-9-]*$/.test(given.worker) ||
+      !Array.isArray(given.runs) ||
+      !given.runs.every((id: unknown) => Number.isSafeInteger(id) && Number(id) > 0) ||
+      new Set(given.runs).size !== given.runs.length
+    )
+      throw new InputError("队列要提供接单程序和不重复的轮次编号");
+    if (!Object.values(draft.rules.agents).some((agent) => agent.worker === given.worker)) {
+      throw new InputError("这个接单程序没有登记");
+    }
+    const queued = rows(draft.view, "runs", { state: "queued" })
+      .filter((run) => queueWorker(draft.rules, run) === given.worker)
+      .sort(queueOrder);
+    const ids = queued.map((run) => run.id);
+    if (ids.length !== given.runs.length || ids.some((id) => !given.runs.includes(id))) {
+      throw new Conflict("队列已经变化，请刷新后重新调整");
+    }
+    if (ids.every((id, index) => id === given.runs[index])) return { changed: false, runs: ids };
+    // A full permutation prevents a stale browser from silently dropping a newly queued or claimed run.
+    given.runs.forEach((id: number, index: number) => put(draft, "runs", id, { queue_order: index + 1 }));
+    return { changed: true, runs: [...given.runs] };
+  },
   createCard,
   tell(draft, key, title, text) {
     const told = createCard(draft, { key, title, text, kind: "notice", fyi: true, once: true });

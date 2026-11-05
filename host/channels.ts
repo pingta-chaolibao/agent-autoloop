@@ -2,6 +2,7 @@
 // in this install's folder first, then the ones that ship. A channel in another language needs only the protocol.
 import type { Hub } from "../protocol/client.ts";
 import { loadPlugin } from "./plugins.ts";
+import type { Asset } from "../protocol/media.ts";
 
 export type Card = {
   id: number;
@@ -17,9 +18,11 @@ export type Card = {
   answer: string | null;
   result: string | null;
   link: string | null;
+  artifacts?: Asset[];
 };
 export type ChannelContext = {
-  hub: Pick<Hub, "nextCard" | "delivered" | "failed" | "answer">;
+  hub: Pick<Hub, "nextCard" | "delivered" | "failed" | "answer"> & Partial<Pick<Hub, "cardAsset">>;
+  directory?: string;
   options: Record<string, unknown>;
   log: (line: string) => void;
   signal: AbortSignal;

@@ -5,6 +5,23 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkSchema } from "../protocol/schema.ts";
 import { parseEvent, parseResult } from "../protocol/validate.ts";
+import { validAssets } from "../protocol/media.ts";
+
+test("media wire schemas agree with supported formats and size limits; queue IDs cannot repeat", () => {
+  const asset = { id: "a".repeat(64), name: "圖片.PNG", type: "image/png", size: 100 };
+  for (const value of [
+    asset,
+    { ...asset, name: "../secret.png" },
+    { ...asset, size: 10_000_001 },
+    { ...asset, type: "text/html" },
+    { ...asset, name: "clip.mp4", type: "video/mp4" },
+  ]) {
+    assert.equal(checkSchema("asset", value).length === 0, validAssets([value]));
+  }
+  assert.deepEqual(checkSchema("result", { outcome: "done", artifacts: [asset] }), []);
+  assert.deepEqual(checkSchema("queue-reorder", { worker: "local", runs: [3, 1, 2] }), []);
+  assert.ok(checkSchema("queue-reorder", { worker: "local", runs: [1, 1] }).length);
+});
 
 test("wire schemas agree with event and receipt boundaries", () => {
   for (const input of [

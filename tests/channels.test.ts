@@ -52,6 +52,61 @@ test("a card shows its options while it's open, and what became of it after", ()
   assert.match(said({ ...base, kind: "notice", state: "closed", options: [], result: "已处理" }), /已处理/);
 });
 
+test("feishu sends result media with stable keys before the interactive card, using the private cache", async () => {
+  const recorded = join(dir, "media-lark.log");
+  const lark = nodeCommand(
+    join(dir, "media-lark"),
+    `#!${process.execPath}
+import fs from 'node:fs';
+const args=process.argv.slice(2);
+if(args[0]==='event')setInterval(()=>{},1000);
+else {let body='';for await(const chunk of process.stdin)body+=chunk;fs.appendFileSync(${JSON.stringify(recorded)},JSON.stringify({args,cwd:process.cwd(),body})+'\\n');console.log(JSON.stringify({ok:true,data:{message_id:args.includes('--image')?'om_image':'om_card'}}));}
+`,
+  );
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const asset = { id: "a".repeat(64), name: "結果.png", type: "image/png", size: png.length };
+  const stop = new AbortController();
+  const cards = [{ ...base, kind: "notice" as const, state: "closed" as const, options: [], artifacts: [asset] }];
+  const delivered: unknown[] = [];
+  const cache = join(dir, "private-media");
+  await feishu({
+    hub: {
+      async nextCard() {
+        const card = cards.shift();
+        if (!card) stop.abort();
+        return { card: card ?? null };
+      },
+      async cardAsset(id: number, value: string) {
+        assert.equal(id, base.id);
+        assert.equal(value, asset.id);
+        return png;
+      },
+      async delivered(...args: unknown[]) {
+        delivered.push(args);
+      },
+      async failed() {
+        assert.fail("media delivery failed");
+      },
+    } as any,
+    options: { user: "ou_me", lark },
+    directory: cache,
+    signal: stop.signal,
+    log: () => {},
+  });
+  const calls = readFileSync(recorded, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  assert.equal(calls[0].args.includes("--image"), true);
+  assert.equal(calls[1].args.includes("interactive"), true);
+  assert.equal(calls[0].cwd, cache);
+  assert.ok(calls[0].args.includes(`autoloop-${base.id}-${asset.id.slice(0, 24)}`));
+  assert.deepEqual(delivered, [[base.id, base.version, "om_card"]]);
+});
+
 test("feishu CLI calls leave the HTTP loop available", async () => {
   let requests = 0;
   const server = createServer((_req, res) => {

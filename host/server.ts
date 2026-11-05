@@ -4,6 +4,8 @@ import { watch } from "node:fs";
 import { basename, dirname } from "node:path";
 import { RULES_FILE } from "./home.ts";
 import { loadPlugin } from "./plugins.ts";
+import { HOME } from "./home.ts";
+import { createMediaHandler } from "./media.ts";
 import * as hub from "./runtime.ts";
 import { AuthError, NotFound } from "../kernel/errors.ts";
 import { createHandler } from "../kernel/http.ts";
@@ -99,7 +101,7 @@ export function makeHandler(commit = "dev") {
     hub.tick();
     arm();
   });
-  const handle = createHandler({
+  const core = createHandler({
     commit,
     now: Date.now,
     view: hub.getView,
@@ -129,8 +131,9 @@ export function makeHandler(commit = "dev") {
   });
   hub.tick();
   arm();
+  const media = createMediaHandler({ home: HOME, view: hub.getView, environment: hub.environment });
   return {
-    handle,
+    handle: async (request: Request) => (await media(request)) ?? core(request),
     close() {
       closed = true;
       clearTimeout(timer);

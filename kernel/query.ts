@@ -9,6 +9,11 @@ export function configuration(view: View, version?: number): Rules {
   return (version === undefined || version === current?.version ? current : view.get("config", version))?.value;
 }
 export const workerOf = (view: View, run: Row) => configuration(view, run.rules_version).agents[run.agent]?.worker;
+export const queueOrder = (a: Row, b: Row) => (a.queue_order ?? a.id) - (b.queue_order ?? b.id) || a.id - b.id;
+export function queueWorker(rules: Rules, run: Row) {
+  const rule = rules.rules.find((rule) => rule.name === run.rule);
+  return rule ? rules.agents[rule.to]?.worker : undefined;
+}
 export function agentsOf(view: View, worker: string) {
   const agents = Object.entries(configuration(view).agents);
   return agents.filter(([, agent]) => agent.worker === worker).map(([id]) => id);
@@ -66,13 +71,14 @@ export function cardView(card: Row, env: Environment, ref: string | null = null,
     result,
     link,
     rule: card.rule,
+    artifacts: JSON.parse(card.artifacts ?? "[]"),
     ...when,
   };
 }
 
 export function jobOf(view: View, run: Row, env: Environment): Job {
   const rules = configuration(view, run.rules_version);
-  const { name, cwd, skill, prompt, emits } = rules.rules.find((rule) => rule.name === run.rule)!;
+  const { name, cwd, skill, prompt, emits, attachments } = rules.rules.find((rule) => rule.name === run.rule)!;
   const events = eventsOf(view, run.id);
   const eventIds = events.map((event) => event.id);
   const thread = { rule: run.rule, lane: run.lane };
@@ -88,7 +94,7 @@ export function jobOf(view: View, run: Row, env: Environment): Job {
     run: run.id,
     token: credential(env, "run", run.id, run.issued),
     attempt: run.attempts + 1,
-    rule: { name, cwd, skill, prompt, emits },
+    rule: { name, cwd, skill, prompt, emits, ...(attachments?.length && { attachments }) },
     agent: { ...rules.agents[run.agent], id: run.agent },
     session: run.session ?? run.resume,
     askFirst: rules.askFirst,

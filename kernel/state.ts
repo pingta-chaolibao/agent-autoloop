@@ -2,7 +2,7 @@
 import type { SQLInputValue } from "node:sqlite";
 import { describeCron, dayStart, nextRun, parseCron } from "./cron.ts";
 import { iso, type Row } from "./evolve.ts";
-import type { cardView } from "./query.ts";
+import { queueWorker, type cardView } from "./query.ts";
 import { cronOf, eventRule, SCHEDULE, type Rules } from "./rules.ts";
 
 /** Seen this recently counts as online. */
@@ -70,12 +70,35 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
   const counts = all<Row>(COUNTS, [iso(dayStart(now, rules.timezone))]);
   const openCards = all<Row>("SELECT * FROM cards WHERE state = 'open' ORDER BY id DESC");
   const recentCards = all<Row>("SELECT * FROM cards WHERE state <> 'open' ORDER BY id DESC LIMIT 20");
+  const queues = new Map<string, number[]>();
+  const positions = new Map<number, { worker: string; position: number }>();
+  for (const run of all<Row>("SELECT * FROM runs WHERE state='queued' ORDER BY COALESCE(queue_order,id),id")) {
+    const worker = queueWorker(rules, run);
+    if (!worker) continue;
+    const ids = queues.get(worker) ?? [];
+    ids.push(run.id);
+    queues.set(worker, ids);
+    positions.set(run.id, { worker, position: ids.length });
+  }
   const older = before ? "WHERE id < ?" : "";
   const page = all<Row>(
     `SELECT * FROM runs ${older} ORDER BY id DESC LIMIT ?`,
     before ? [before, PAGE + 1] : [PAGE + 1],
   );
-  const active = before ? [] : all<Row>("SELECT * FROM runs WHERE state IN ('queued', 'claimed', 'unknown')");
+  // Waiting rounds can be older than the history page; key lookups keep the active-state query indexed.
+  const awaiting = before
+    ? []
+    : [
+        ...new Set(
+          openCards.filter((card) => card.kind === "ask" && card.run_id != null).map((card) => String(card.run_id)),
+        ),
+      ].flatMap((id) => {
+        const stored = all<{ data: string }>("SELECT data FROM projections WHERE collection='runs' AND key=?", [id])[0];
+        return stored ? [JSON.parse(stored.data) as Row] : [];
+      });
+  const active = before
+    ? []
+    : [...all<Row>("SELECT * FROM runs WHERE state IN ('queued', 'claimed', 'unknown')"), ...awaiting];
   const hasMore = page.length > PAGE;
   const byId = new Map([...page.slice(0, PAGE), ...active].map((run) => [run.id, run]));
   const visible = [...byId.values()].sort((a, b) => b.id - a.id);
@@ -115,6 +138,9 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
       rule: run.rule,
       agent: run.agent,
       state: run.state,
+      queueWorker: positions.get(run.id)?.worker ?? null,
+      queuePosition: positions.get(run.id)?.position ?? null,
+      waitingCards: openCards.filter((card) => card.kind === "ask" && card.run_id === run.id).map((card) => card.id),
       attempts: run.attempts,
       createdAt: run.created_at,
       claimedAt: run.claimed_at,
@@ -125,11 +151,15 @@ export function stateOf(now: number, before: number | undefined, rules: Rules, {
       link: run.link ?? "",
       session: run.session,
       usage: run.usage ? JSON.parse(run.usage) : null,
+      attachments: JSON.parse(run.attachments ?? "[]"),
+      artifacts: JSON.parse(run.artifacts ?? "[]"),
+      artifactError: run.artifact_error ?? null,
       stopping: run.cancel_at !== null,
       events: all<Row>(EVENTS_OF_RUN, [run.id]),
     })),
     hasMore,
     nextBefore: hasMore ? page[PAGE - 1].id : null,
     unrouted: unrouted(),
+    queues: [...queues].map(([worker, runs]) => ({ worker, runs })),
   };
 }

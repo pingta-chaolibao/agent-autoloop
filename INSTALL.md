@@ -96,3 +96,9 @@ agent-autoloop uninstall
 - [安全边界](SECURITY.md)：密钥、执行权限和交付审查。
 
 开发检查用 `npm test`、`npm run typecheck`、`npm run format:check`，完整故障与性能检查用 `npm run test:nightly`。备份同时保留 `hub.db` 和 `master.key`；后者权限应为 0600。
+
+## 队列与媒体的版本要求
+
+使用队列调整或图片、影片任务时，中台与接单程序需同步更新；旧文字任务接口保持兼容。Lark 发送媒体需要应用的上传资源权限 im:resource 或 im:resource:upload。FFmpeg 可为视频输入生成首帧、为结果影片生成 Lark 封面；未提供 FFmpeg 时仍保留原影片文件。
+
+附件字节保存在资料目录的 assets，卸载继续保留整个资料目录。备份与恢复时将 assets 与 hub.db、master.key 一起保存，避免只恢复元数据而丢失附件。

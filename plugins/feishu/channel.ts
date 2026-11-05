@@ -5,8 +5,12 @@
 //   "channels": { "feishu": { "name": "飞书", "answerers": ["ou_xxx"] } } in rules.json: who may answer.
 import { execFile, spawn } from "node:child_process";
 import readline from "node:readline";
+import { existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import type { Card, ChannelContext } from "../../host/channels.ts";
 import { programCommand } from "../../worker/agents.ts";
+import { previewImage } from "../../worker/media.ts";
+import { MEDIA_TYPES, parseAssets } from "../../protocol/media.ts";
 
 function outcomeOf(card: Card) {
   const chosen = card.choice === null ? card.answer : card.options[card.choice];
@@ -47,7 +51,8 @@ export function render(card: Card) {
   };
 }
 
-export default async function feishu({ hub, options, log, signal }: ChannelContext) {
+export default async function feishu({ hub, options, directory, log, signal }: ChannelContext) {
+  if (directory) mkdirSync(directory, { recursive: true, mode: 0o700 });
   const program = (options.lark as string | undefined) ?? "lark-cli";
   const command = process.platform === "win32" ? programCommand(program) : [program];
   const lark = async (args: string[], input: string) => {
@@ -55,7 +60,7 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
       const child = execFile(
         command[0],
         [...command.slice(1), ...args],
-        { encoding: "utf8", timeout: 60_000, signal, windowsHide: true },
+        { encoding: "utf8", timeout: 60_000, signal, windowsHide: true, ...(directory && { cwd: directory }) },
         (error, stdout) => (error ? reject(error) : resolve(stdout)),
       );
       child.stdin!.on("error", reject);
@@ -81,6 +86,45 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
       .message_id as string;
   }
 
+  async function sendMedia(card: Card) {
+    const assets = parseAssets(card.artifacts ?? []);
+    if (!assets.length) return;
+    if (!directory || !hub.cardAsset) throw new Error("Lark 通道需要附件缓存目录与下载接口");
+    for (const asset of assets) {
+      const filename = asset.id + MEDIA_TYPES[asset.type];
+      const file = path.join(directory, filename);
+      if (!existsSync(file)) {
+        const bytes = await hub.cardAsset(card.id, asset.id);
+        if (bytes.length !== asset.size) throw new Error("结果附件不完整");
+        writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+      } else if (!lstatSync(file).isFile() || lstatSync(file).isSymbolicLink() || lstatSync(file).size !== asset.size)
+        throw new Error("附件缓存无效");
+      const target = [
+        "im",
+        "+messages-send",
+        "--as",
+        "bot",
+        "--user-id",
+        owner,
+        "--idempotency-key",
+        `autoloop-${card.id}-${asset.id.slice(0, 24)}`,
+      ];
+      if (asset.type.startsWith("image/")) await lark([...target, "--image", filename], "");
+      else {
+        const uploaded = await lark(
+          ["im", "files", "create", "--as", "bot", "--data", "-", "--file", filename],
+          JSON.stringify({ file_type: "mp4", file_name: asset.name }),
+        );
+        const key = uploaded.data.file_key;
+        if (typeof key !== "string") throw new Error("Lark 没有返回影片文件编号");
+        const cover = `${asset.id}.cover.png`;
+        if (await previewImage(file, path.join(directory, cover)))
+          await lark([...target, "--video", key, "--video-cover", cover], "");
+        else await lark([...target, "--file", key], "");
+      }
+    }
+  }
+
   async function deliver() {
     while (!signal.aborted) {
       let card: Card | null;
@@ -96,7 +140,10 @@ export default async function feishu({ hub, options, log, signal }: ChannelConte
         const content = JSON.stringify(render(card));
         let ref = card.ref;
         if (ref) await updateMessage(ref, content);
-        else ref = await sendMessage(card.id, content);
+        else {
+          await sendMedia(card);
+          ref = await sendMessage(card.id, content);
+        }
         await hub.delivered(card.id, card.version, ref);
       } catch (error) {
         log(`card ${card.id} not sent: ${error}`);

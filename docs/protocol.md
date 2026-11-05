@@ -399,3 +399,37 @@ Apple M5 Pro、24 GB、Node 24.21.0，用 `node scripts/history.ts 1000 10000 10
 Ship 使用本引擎仓库的 `plugins/delivery/action.yml`，项目固定到发布后的完整提交。Action 只输出 `release` 和 `superseded`，项目已有发布步骤根据输出运行。它与交付进程共用 `project.ts` 的范围与健康判断，不在项目里长期复制工具。
 
 普通健康 URL 只允许 HTTPS。测试时必须显式传 `--test-local-health`，Action 同样要 `test-local-health: 'true'`，才接受 `http://127.0.0.1`；不接受其他 HTTP 地址。GitHub 合并规则由项目维护者设置。
+
+## 队列顺序与媒体附件
+
+这些是兼容旧文字任务的新增字段与接口。旧客户端可以忽略响应中的新字段；含附件的任务需要中台与接单程序一起更新。队列与附件元数据仍通过事实日志保存，文件内容由外壳保存在资料目录的 assets 中，内核不读写文件、不发外部请求。
+
+本人可以调整同一接单程序的排队顺序：
+
+```http
+POST /v1/queue/reorder    Authorization: Bearer <本人的密钥>
+{ "worker": "my-worker", "runs": [8, 3, 5] }
+→ { "changed": true, "runs": [8, 3, 5] }
+```
+
+runs 必须是该接单程序当前全部 queued 轮次的排列。领取、新增、取消或规则换接单程序造成成员变化时返回 409，客户端应刷新后再操作；不能把已经领取的任务移回队列。重排不改变重试时间、不抢占运行中的任务、不绕过事项和组的并发限制。同一排列再次提交不重复记录。未调整的旧任务继续按编号先后领取，新事件仍按原事项合并。
+
+/v1/state 新增 queues 数组，每项为 { worker, runs }；轮次新增 queueWorker、queuePosition（从 1 开始）、waitingCards。第一页包括仍有开放提问卡片的轮次，便于客户端将本轮已结束但待回答的工作显示在待处理栏。人工调整队列不改变业务状态。
+
+每份附件的元数据为 { id, name, type, size }：id 是上传接口返回的 64 位小写十六进制摘要，name 为原文件名，type 为 MIME，size 为字节数。每项任务最多 10 份附件；支持 PNG、JPG、WebP 图片（每个不超过 10,000,000 字节）和 MP4（每个不超过 30,000,000 字节）。文件名不能含路径或控制字符，实际内容必须与类型相符。
+
+| 方法与地址 | 身份 | 用途 |
+|---|---|---|
+| POST /v1/assets | 本人 | 上传输入附件 |
+| GET、HEAD /v1/assets/<id> | 本人 | 查看已上传的输入或结果，支持 Range |
+| GET /v1/runs/<run>/assets/<id> | 当前这一轮的 token | 只下载该轮领取时规则声明的输入附件 |
+| POST /v1/runs/<run>/assets | 当前这一轮的 token | 上传该轮生成的结果附件 |
+| GET /v1/cards/<card>/assets/<id> | 通道 | 只下载该通道可见卡片引用的结果附件 |
+
+上传请求体为原始文件字节，Content-Type 为对应 MIME，X-File-Name 为经过 encodeURIComponent 编码的文件名。响应为附件元数据，不含本机路径或公开下载令牌。轮次结束后，该轮 token 的文件访问失效。
+
+规则可选 attachments，内容为上传所得元数据数组；领取的 Job.rule 带同样的字段。接单程序把文件下载到自己的本轮资料目录，在 context.json 的 attachments 中补充本地 path；输入图片也作为实际图片传给支持图片的 Agent。影片提供原文件，装有 FFmpeg 时另附首帧预览，Agent 可按任务要求继续抽帧。
+
+Agent 将需展示的图片、影片直接写到本轮 outputs 目录，接单程序上传后在 Result 中补充 artifacts；附件问题单独写 artifactError，不把已完成的业务变成自动重做。已保存的结果在传送失败后继续补交。/v1/state 轮次增加 attachments、artifacts、artifactError；Card 增加可选 artifacts。tell 为 always 的完成通知会包含结果附件。
+
+Lark 通道可发送结果图片与影片，发送键由卡片和附件编号共同确定，避免传送重试重复发消息。影片使用 FFmpeg 生成封面；未能生成封面时以文件形式发送。普通文字 Webhook 继续发送文字。运行资料备份应同时保存 assets、hub.db 与 master.key；仅备份日志不能重建文件字节。

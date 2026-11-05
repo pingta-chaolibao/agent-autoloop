@@ -33,6 +33,7 @@ function visit(schema: any, item: any, path: string): string[] {
     if (!Number.isFinite(item) || outside(item, schema.minimum, schema.maximum)) return [path];
   }
   if (Array.isArray(item)) {
+    if (schema.uniqueItems && new Set(item.map((value) => JSON.stringify(value))).size !== item.length) return [path];
     if (outside(item.length, schema.minItems, schema.maxItems)) return [path];
     return item.flatMap((child, index) => (schema.items ? visit(schema.items, child, `${path}[${index}]`) : []));
   }
