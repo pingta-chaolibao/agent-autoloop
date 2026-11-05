@@ -82,6 +82,10 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 已回答的问题卡片在原消息标题显示「已回答」或「已处理」，同时收起选项和文字输入。CLI 以非零退出码报告可重试的 TAT 认证限流时，通道保留结构化错误信息，在同一操作内按 1 秒、2 秒加最多 250 毫秒抖动短暂退避，最多尝试 3 次；认证阶段尚未执行实际 API 操作，因此可重试相同内容。其他错误或短重试耗尽后仍交给中台原有的通知重试，不重新执行 Agent 业务。退避常量定义在 `plugins/feishu/channel.ts` 的 `AUTH_RETRY_MS` 与 `AUTH_JITTER_MS`。
 
+飞书通道还可选配 `taskIntake: { url, token, menu? }`，将本人私聊的「新任务」或「新任務」、任务卡片回调转交本人安装的本机管理服务。`url` 只接受无账号密码的本机 HTTP 地址，`token` 是该服务单独配置的 64 位小写十六进制密钥，不使用中台通道密钥。默认未配置，不增加任何消费者，也不改变原卡片问答。
+
+接收消息需发布 `im.message.receive_v1` 并开通 `im:message.p2p_msg:readonly`。可选的 `menu: true` 还需订阅 `application.bot.menu_v6`，底部菜单事件键为 `autoloop.new_task`。多个 CLI 消费者共享同一个本地总线和长连接，不另开应用监听。转交内容不含卡片访问 token 或原卡片正文。本机服务须再次核验本人、原消息与提交身份，负责创建可信规则或 Issue，并将任务交回现有中台接口；任意聊天文字不作为任务，外部事件也不能修改规则、Agent、目录或权限。
+
 ## 事件插件
 
 从 [hello-source/source.ts](../examples/plugins/hello-source/source.ts) 开始。它检查 `x-shop-signature` 中的 HMAC-SHA256，再把订单变成事件。

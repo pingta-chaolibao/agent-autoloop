@@ -83,6 +83,20 @@ export function render(card: Card) {
 
 export default async function feishu({ hub, options, directory, log, signal }: ChannelContext) {
   if (directory) mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const intake = options.taskIntake as { url: string; token: string; menu?: boolean } | undefined;
+  if (intake) {
+    const url = new URL(intake.url);
+    if (
+      url.protocol !== "http:" ||
+      !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !/^[a-f0-9]{64}$/.test(intake.token)
+    )
+      throw new Error("派工入口只允许配置本機 HTTP 地址和独立的 64 位密钥");
+  }
   const program = (options.lark as string | undefined) ?? "lark-cli";
   const command = process.platform === "win32" ? programCommand(program) : [program];
   const lark = async (args: string[], input: string) => {
@@ -122,6 +136,68 @@ export default async function feishu({ hub, options, directory, log, signal }: C
   };
   const owner = (options.user as string | undefined) ?? (await lark(["auth", "status"], "")).identities?.user?.openId;
   if (!owner) throw new Error("飞书通道要在 config.json 写 user，或者先 lark-cli auth login");
+
+  async function forwardTask(event: Record<string, unknown>, type: string) {
+    if (!intake) return;
+    const fields = [
+      "sender_id",
+      "sender_type",
+      "chat_type",
+      "message_type",
+      "message_id",
+      "content",
+      "operator_id",
+      "operator_open_id",
+      "event_key",
+      "event_id",
+      "action_value",
+      "form_value",
+    ];
+    const body = JSON.stringify({
+      event: {
+        ...Object.fromEntries(fields.filter((key) => event[key] !== undefined).map((key) => [key, event[key]])),
+        type,
+      },
+    });
+    // Retrying this delivery preserves the message/draft identity; the local intake owns submission deduplication.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const response = await fetch(intake.url, {
+          method: "POST",
+          headers: { authorization: `Bearer ${intake.token}`, "content-type": "application/json" },
+          body,
+          redirect: "error",
+          signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
+        });
+        await response.arrayBuffer();
+        if (response.ok) return;
+        if (response.status < 500) throw new Error(`派工入口拒绝请求：HTTP ${response.status}`);
+        if (attempt >= 2) throw new Error(`派工入口暂时不可用：HTTP ${response.status}`);
+      } catch (error) {
+        if (signal.aborted || attempt >= 2 || (error instanceof Error && error.message.startsWith("派工入口拒绝")))
+          throw error;
+      }
+      await delay(1000 * (attempt + 1), undefined, { signal });
+    }
+  }
+
+  async function taskCommand(line: string) {
+    const event = JSON.parse(line);
+    if (
+      event.sender_id === owner &&
+      event.sender_type === "user" &&
+      event.chat_type === "p2p" &&
+      event.message_type === "text" &&
+      ["新任务", "新任務"].includes(event.content?.trim())
+    )
+      await forwardTask(event, "im.message.receive_v1");
+  }
+
+  async function taskMenu(line: string) {
+    const event = JSON.parse(line);
+    if ((event.operator_open_id ?? event.operator_id) === owner && event.event_key === "autoloop.new_task")
+      await forwardTask(event, "application.bot.menu_v6");
+  }
 
   const updateMessage = (ref: string, content: string) =>
     lark(["im", "messages", "patch", "--message-id", ref, "--as", "bot", "--data", "-"], JSON.stringify({ content }));
@@ -204,6 +280,11 @@ export default async function feishu({ hub, options, directory, log, signal }: C
   async function clicked(line: string) {
     const event = JSON.parse(line);
     const value = JSON.parse(event.action_value);
+    if (typeof value?.intake === "string") {
+      if (intake && event.operator_id === owner && typeof event.message_id === "string" && event.message_id)
+        await forwardTask(event, "card.action.trigger");
+      return;
+    }
     if (
       !Number.isInteger(value.card) ||
       value.card < 1 ||
@@ -225,31 +306,42 @@ export default async function feishu({ hub, options, directory, log, signal }: C
     log(`card ${value.card}: answered by ${event.operator_id}, ${answer.changed ? "counted" : "already settled"}`);
   }
 
-  async function listen() {
+  async function listen(eventKey = "card.action.trigger", handle = clicked) {
     while (!signal.aborted) {
       // stdin stays open: lark-cli ends an unbounded consume when its stdin closes.
-      const consume = spawn(
-        command[0],
-        [...command.slice(1), "event", "consume", "card.action.trigger", "--as", "bot"],
-        {
-          stdio: ["pipe", "pipe", "pipe"],
-          windowsHide: true,
-        },
-      );
+      const consume = spawn(command[0], [...command.slice(1), "event", "consume", eventKey, "--as", "bot"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
       const stop = () => consume.kill();
       signal.addEventListener("abort", stop);
-      readline.createInterface({ input: consume.stderr }).on("line", (line) => log(line));
+      // New event consumers wait for CLI readiness; all keys reuse its one local bus and WebSocket connection.
+      let waiting: string[] | null = eventKey === "card.action.trigger" ? null : [];
+      const accept = (line: string) => void handle(line).catch((error) => log(`${eventKey} not handled: ${error}`));
+      readline.createInterface({ input: consume.stderr }).on("line", (line) => {
+        log(line);
+        if (line === `[event] ready event_key=${eventKey}` && waiting) {
+          const buffered = waiting;
+          waiting = null;
+          buffered.forEach(accept);
+        }
+      });
       readline
         .createInterface({ input: consume.stdout })
-        .on("line", (line) => void clicked(line).catch((error) => log(`click not handled: ${error}`)));
+        .on("line", (line) => (waiting ? waiting.push(line) : accept(line)));
       await new Promise((resolve) => consume.on("close", resolve));
       signal.removeEventListener("abort", stop);
       if (!signal.aborted) {
-        log("the click listener stopped; starting it again in 10 seconds");
+        log(`${eventKey} listener stopped; starting it again in 10 seconds`);
         await new Promise((resolve) => setTimeout(resolve, 10_000));
       }
     }
   }
 
-  await Promise.all([deliver(), listen()]);
+  await Promise.all([
+    deliver(),
+    listen(),
+    ...(intake ? [listen("im.message.receive_v1", taskCommand)] : []),
+    ...(intake?.menu ? [listen("application.bot.menu_v6", taskMenu)] : []),
+  ]);
 }

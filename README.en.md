@@ -148,6 +148,8 @@ Built-in plugins ship with the program and are enabled through configuration. Us
 
 **What has been tested:** Claude Code, Codex, and ACP (with the official Codex ACP adapter) have run multi-turn Q&A and session resumption across processes. Feishu has run real delivery, button callbacks, and card updates. The four webhook templates have only been checked against local mock servers. These text channels answer through a link, so `hub.publicUrl` must be reachable from your phone or computer.
 
+Feishu / Lark can optionally forward the owner's new-task requests to a separately installed local management client through `taskIntake`. That client provides cards for creating an Issue or dispatching a task directly and requires its own capability token. The hub protocol, channel key and default notification behavior stay unchanged. See the [channel plugin guide](docs/plugins.md#通道插件).
+
 Feishu / Lark question cards keep their choices and also provide a multiline input with a submit button. If none of the choices fit, write your explanation and submit it to continue the original task. Text replies use the same sender and original-message checks; duplicate submissions record only the first answer.
 
 **Other CLI agents connect in one line.** Set `use: "command"` and pass a command array; `{prompt}` is a single argument, never evaluated as shell code. These commands come from each tool's official docs, and we have not run each of them yet:
