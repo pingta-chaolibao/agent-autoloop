@@ -5,12 +5,17 @@
 //   "channels": { "feishu": { "name": "飞书", "answerers": ["ou_xxx"] } } in rules.json: who may answer.
 import { execFile, spawn } from "node:child_process";
 import readline from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 import { existsSync, lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Card, ChannelContext } from "../../host/channels.ts";
 import { programCommand } from "../../worker/agents.ts";
 import { previewImage } from "../../worker/media.ts";
 import { MEDIA_TYPES, parseAssets } from "../../protocol/media.ts";
+
+// A TAT 429 happens before the API operation. Short retries avoid minute-scale notification backoff after a click.
+const AUTH_RETRY_MS = [1000, 2000];
+const AUTH_JITTER_MS = 250;
 
 function outcomeOf(card: Card) {
   const chosen = card.choice === null ? card.answer : card.options[card.choice];
@@ -23,6 +28,8 @@ function outcomeOf(card: Card) {
 /** One card, as it looks now: the options while it's open, what became of it after. */
 export function render(card: Card) {
   const outcome = outcomeOf(card);
+  const stateLabel =
+    card.kind === "ask" ? { open: "", decided: "已回答", done: "已处理", closed: "已结案" }[card.state] : "";
   // Each option is a block across the card, its words wrapping: buttons in a row, one line high, cut long options off.
   const option = (label: string, index: number) => ({
     tag: "interactive_container",
@@ -61,7 +68,7 @@ export function render(card: Card) {
     schema: "2.0",
     config: { update_multi: true, enable_forward: false },
     header: {
-      title: { tag: "plain_text", content: card.title },
+      title: { tag: "plain_text", content: stateLabel ? `${stateLabel} · ${card.title}` : card.title },
       template: card.state === "open" ? "blue" : card.state === "closed" ? "grey" : "green",
     },
     body: {
@@ -79,21 +86,39 @@ export default async function feishu({ hub, options, directory, log, signal }: C
   const program = (options.lark as string | undefined) ?? "lark-cli";
   const command = process.platform === "win32" ? programCommand(program) : [program];
   const lark = async (args: string[], input: string) => {
-    const printed = await new Promise<string>((resolve, reject) => {
-      const child = execFile(
-        command[0],
-        [...command.slice(1), ...args],
-        { encoding: "utf8", timeout: 60_000, signal, windowsHide: true, ...(directory && { cwd: directory }) },
-        (error, stdout) => (error ? reject(error) : resolve(stdout)),
-      );
-      child.stdin!.on("error", reject);
-      child.stdin!.end(input);
-    });
-    const out = JSON.parse(printed);
-    if (out.ok === false || out.error) {
-      throw new Error(`lark-cli ${args.slice(0, 3).join(" ")}: ${JSON.stringify(out.error ?? out).slice(0, 300)}`);
+    for (let attempt = 0; ; attempt++) {
+      const { printed, failure } = await new Promise<{ printed: string; failure: Error | null }>((resolve, reject) => {
+        const child = execFile(
+          command[0],
+          [...command.slice(1), ...args],
+          { encoding: "utf8", timeout: 60_000, signal, windowsHide: true, ...(directory && { cwd: directory }) },
+          (error, stdout) => resolve({ printed: stdout, failure: error }),
+        );
+        child.stdin!.on("error", reject);
+        child.stdin!.end(input);
+      });
+      let out;
+      try {
+        out = JSON.parse(printed);
+      } catch (error) {
+        throw failure ?? error;
+      }
+      const throttled =
+        out.error?.retryable === true &&
+        out.error?.code === 429 &&
+        out.error?.subtype === "rate_limit" &&
+        typeof out.error?.message === "string" &&
+        out.error.message.startsWith("TAT endpoint ");
+      if (throttled && attempt < AUTH_RETRY_MS.length) {
+        await delay(AUTH_RETRY_MS[attempt] + Math.floor(Math.random() * AUTH_JITTER_MS), undefined, { signal });
+        continue;
+      }
+      if (out.ok === false || out.error) {
+        throw new Error(`lark-cli ${args.slice(0, 3).join(" ")}: ${JSON.stringify(out.error ?? out).slice(0, 300)}`);
+      }
+      if (failure) throw failure;
+      return out;
     }
-    return out;
   };
   const owner = (options.user as string | undefined) ?? (await lark(["auth", "status"], "")).identities?.user?.openId;
   if (!owner) throw new Error("飞书通道要在 config.json 写 user，或者先 lark-cli auth login");

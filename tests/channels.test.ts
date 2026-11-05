@@ -6,6 +6,7 @@
 // A slow CLI call must not block the hub's HTTP loop while looking up a user, sending or updating a card.
 // A free-text reply must reach the same card with its author and message, without becoming an option or a blank answer.
 // JSON 2.0 must identify the submit button with form_action_type, or Lark rejects the whole form.
+// A CLI exit with a retryable TAT 429 must not leave an answered card interactive until minute-scale delivery retry.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -47,8 +48,10 @@ test("a card shows its options while it's open, and what became of it after", ()
   assert.equal(blocks[1].border_color, "blue", "what's recommended stands out");
   const said = (card: Card) => JSON.stringify(render(card).body.elements);
   assert.match(said({ ...base, state: "decided", choice: 1 }), /你选了「留着」，已记录/);
+  assert.match(render({ ...base, state: "decided", choice: 1 }).header.title.content, /^已回答 · /);
   assert.ok(!said({ ...base, state: "decided", choice: 1 }).includes("callback"));
   assert.match(said({ ...base, state: "done", choice: 0, result: "删了" }), /你选了「删」。已执行：删了/);
+  assert.match(render({ ...base, state: "done", choice: 0, result: "删了" }).header.title.content, /^已处理 · /);
   assert.match(said({ ...base, state: "decided", answer: "归档" }), /你选了「归档」/);
   assert.match(said({ ...base, state: "closed", result: "问题自己好了" }), /不用决定了：问题自己好了/);
   assert.match(said({ ...base, kind: "notice", state: "closed", options: [], result: "已处理" }), /已处理/);
@@ -301,6 +304,120 @@ if(args[0]==='event') {
     calls.filter((c) => c[0] === "answer"),
     [["answer", 5, { choice: 1, by: "ou_me", ref: "om_5" }]],
   );
+});
+
+test("feishu retries a TAT throttle before sending or patching, preserving the original message and answer state", async () => {
+  for (const update of [false, true]) {
+    const recorded = join(dir, `tat-retry-${update}.jsonl`);
+    const lark = nodeCommand(
+      join(dir, `tat-retry-${update}`),
+      `#!${process.execPath}
+import fs from 'node:fs';
+if(process.argv[2]==='event')setInterval(()=>{},1000);
+else {
+ let body='';for await(const chunk of process.stdin)body+=chunk;
+ const count=fs.existsSync(${JSON.stringify(recorded)})?fs.readFileSync(${JSON.stringify(recorded)},'utf8').trim().split('\\n').length:0;
+ fs.appendFileSync(${JSON.stringify(recorded)},JSON.stringify({args:process.argv.slice(2),body})+'\\n');
+ if(count===0){console.log(JSON.stringify({ok:false,error:{type:'api',subtype:'rate_limit',code:429,message:'TAT endpoint rate limited (HTTP 429)',retryable:true}}));process.exitCode=1;}
+ else console.log(JSON.stringify({ok:true,data:{message_id:'om_5'}}));
+}
+`,
+    );
+    const stop = new AbortController();
+    const card: Card = update ? { ...base, version: 2, ref: "om_5", state: "decided", choice: 0 } : base;
+    let taken = false;
+    const delivered: unknown[][] = [];
+    const failed: unknown[][] = [];
+    await feishu({
+      hub: {
+        async nextCard() {
+          if (!taken) {
+            taken = true;
+            return { card };
+          }
+          stop.abort();
+          return { card: null };
+        },
+        async delivered(...args: unknown[]) {
+          delivered.push(args);
+        },
+        async failed(...args: unknown[]) {
+          failed.push(args);
+        },
+      } as any,
+      options: { user: "ou_me", lark },
+      signal: stop.signal,
+      log: () => {},
+    });
+    const attempts = readFileSync(recorded, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(attempts.length, 2, "the CLI's nonzero exit must preserve the structured TAT failure");
+    assert.deepEqual(attempts[0], attempts[1], "retry exactly the original operation and content");
+    assert.deepEqual(delivered, [[5, update ? 2 : 1, "om_5"]]);
+    assert.deepEqual(failed, []);
+    if (update) {
+      assert.ok(attempts[1].args.includes("patch"));
+      assert.ok(attempts[1].args.includes("om_5"));
+      assert.doesNotMatch(attempts[1].body, /interactive_container|answer_form|callback/);
+    } else assert.ok(attempts[1].args.includes("agent-autoloop-card-5"));
+  }
+});
+
+test("feishu bounds auth retries and leaves non-auth or permanent failures to the hub", async () => {
+  const cases = [
+    {
+      name: "tat-exhausted",
+      error: { subtype: "rate_limit", code: 429, message: "TAT endpoint rate limited (HTTP 429)", retryable: true },
+      attempts: 3,
+    },
+    {
+      name: "message-quota",
+      error: { subtype: "rate_limit", code: 429, message: "message endpoint rate limited", retryable: true },
+      attempts: 1,
+    },
+    {
+      name: "permission",
+      error: { subtype: "permission", code: 403, message: "permission denied", retryable: false },
+      attempts: 1,
+    },
+  ];
+  for (const scenario of cases) {
+    const recorded = join(dir, `${scenario.name}.log`);
+    const lark = nodeCommand(
+      join(dir, scenario.name),
+      `#!${process.execPath}\nimport fs from 'node:fs';if(process.argv[2]==='event')setInterval(()=>{},1000);else{for await(const chunk of process.stdin){}fs.appendFileSync(${JSON.stringify(recorded)},'attempt\\n');console.log(JSON.stringify({ok:false,error:${JSON.stringify(scenario.error)}}));process.exitCode=1;}`,
+    );
+    const stop = new AbortController();
+    let taken = false,
+      failures = 0,
+      deliveries = 0;
+    await feishu({
+      hub: {
+        async nextCard() {
+          if (!taken) {
+            taken = true;
+            return { card: { ...base, version: 2, ref: "om_5", state: "decided", choice: 0 } };
+          }
+          stop.abort();
+          return { card: null };
+        },
+        async delivered() {
+          deliveries++;
+        },
+        async failed() {
+          failures++;
+        },
+      } as any,
+      options: { user: "ou_me", lark },
+      signal: stop.signal,
+      log: () => {},
+    });
+    assert.equal(readFileSync(recorded, "utf8").trim().split("\n").length, scenario.attempts);
+    assert.equal(failures, 1);
+    assert.equal(deliveries, 0);
+  }
 });
 
 test("a webhook channel posts words and the link once, and has nothing to do for an update", async () => {

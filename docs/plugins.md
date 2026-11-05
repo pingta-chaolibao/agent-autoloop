@@ -80,6 +80,8 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 飞书 / Lark 问题卡片的文字输入通过 JSON 2.0 表单提交。现有 `card.action.trigger` 事件由 CLI 回报 `action_value` 和 `form_value` 两段 JSON 字符串；通道将表单中的 `answer_text` 转为原接口的 `{ text, by, ref }`，保留本人身份与原消息核验，不建立新的会话或监听。单选按钮继续提交 `{ choice, by, ref }`；空白或无效表单不作为回答。
 
+已回答的问题卡片在原消息标题显示「已回答」或「已处理」，同时收起选项和文字输入。CLI 以非零退出码报告可重试的 TAT 认证限流时，通道保留结构化错误信息，在同一操作内按 1 秒、2 秒加最多 250 毫秒抖动短暂退避，最多尝试 3 次；认证阶段尚未执行实际 API 操作，因此可重试相同内容。其他错误或短重试耗尽后仍交给中台原有的通知重试，不重新执行 Agent 业务。退避常量定义在 `plugins/feishu/channel.ts` 的 `AUTH_RETRY_MS` 与 `AUTH_JITTER_MS`。
+
 ## 事件插件
 
 从 [hello-source/source.ts](../examples/plugins/hello-source/source.ts) 开始。它检查 `x-shop-signature` 中的 HMAC-SHA256，再把订单变成事件。
