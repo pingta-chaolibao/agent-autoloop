@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { prepareMedia, collectMedia } from "../worker/media.ts";
+import codex from "../plugins/codex/agent.ts";
+import { nodeCommand } from "./helpers.ts";
 
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=",
@@ -113,4 +115,32 @@ test("output directory links and path-bearing input references cannot escape the
       folder,
     ),
   );
+});
+
+test("Codex image arguments leave session and prompt as positional arguments", (t) => {
+  const folder = directory(t);
+  nodeCommand(path.join(folder, "codex"), "console.log('fake codex');");
+  const originalPath = process.env.PATH;
+  process.env.PATH = folder + path.delimiter + originalPath;
+  t.after(() => {
+    process.env.PATH = originalPath;
+  });
+  const images = [path.join(folder, "one.png"), path.join(folder, "two.png")];
+  for (const image of images) writeFileSync(image, png);
+  for (const resume of [null, "previous-session"]) {
+    const argv = codex.command({
+      prompt: "describe the image",
+      session: "session",
+      resume,
+      cwd: folder,
+      access: "edit",
+      contextFile: path.join(folder, "context.json"),
+      folder,
+      images,
+    });
+    const separator = argv.indexOf("--");
+    assert.ok(separator > argv.lastIndexOf("--image"), "image values must end before positional arguments");
+    assert.deepEqual(argv.slice(separator + 1).slice(0, resume ? 1 : 0), resume ? [resume] : []);
+    assert.ok(argv.at(-1)!.includes("describe the image"));
+  }
 });

@@ -25,6 +25,7 @@ export default {
     "-c",
     'approval_policy="never"',
     ...(turn.images ?? []).flatMap((file) => ["--image", file]),
+    ...(turn.images?.length ? ["--"] : []),
     ...(turn.resume ? [turn.resume] : []),
     "本轮通过后台 codex exec 运行，不要假定桌面应用的浏览器连接已带到本轮。" +
       "网页操作使用本轮实际可用的浏览器工具，或使用规则或 Skill 中已明确配置的浏览器入口。" +
