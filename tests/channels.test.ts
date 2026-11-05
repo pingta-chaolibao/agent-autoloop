@@ -4,6 +4,7 @@
 // the listener dying isn't started again. A GitHub webhook with a bad signature, or with none, is taken; what isn't an
 // identifier reaches the subject; a ping makes an event; replacement tokens in card text rewrite a webhook template.
 // A slow CLI call must not block the hub's HTTP loop while looking up a user, sending or updating a card.
+// A free-text reply must reach the same card with its author and message, without becoming an option or a blank answer.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -50,6 +51,77 @@ test("a card shows its options while it's open, and what became of it after", ()
   assert.match(said({ ...base, state: "decided", answer: "归档" }), /你选了「归档」/);
   assert.match(said({ ...base, state: "closed", result: "问题自己好了" }), /不用决定了：问题自己好了/);
   assert.match(said({ ...base, kind: "notice", state: "closed", options: [], result: "已处理" }), /已处理/);
+});
+
+test("an open question accepts an independent multiline answer and removes the input after a decision", () => {
+  const open = render(base);
+  const form = open.body.elements.find((element: any) => element.tag === "form") as any;
+  assert.ok(form, "a reply must not require choosing one of the proposed options");
+  const input = form.elements.find((element: any) => element.tag === "input");
+  assert.equal(input.name, "answer_text");
+  assert.equal(input.input_type, "multiline_text");
+  const submit = form.elements.find((element: any) => element.tag === "button");
+  assert.equal(submit.action_type, "form_submit");
+  assert.deepEqual(submit.behaviors[0].value, { card: base.id, action: "answer_text" });
+  for (const card of [
+    { ...base, state: "decided" as const, answer: "两者都不是" },
+    { ...base, kind: "notice" as const },
+  ])
+    assert.ok(!render(card).body.elements.some((element: any) => element.tag === "form"));
+});
+
+test("feishu forwards Unicode form replies with the original author/message and ignores empty or malformed submissions", async () => {
+  const text = '两者都不是，墙只在指定条件消失。\n请先核对 "收尾" 的业务含义 🧶';
+  const event = (action: object, form: unknown = JSON.stringify({ answer_text: `  ${text}\n` })) => ({
+    action_value: JSON.stringify(action),
+    form_value: form,
+    operator_id: "ou_me",
+    message_id: "om_5",
+  });
+  const events = [
+    event({ card: 5, action: "answer_text" }),
+    event({ card: 5, action: "answer_text" }, JSON.stringify({ answer_text: " \n " })),
+    event({ card: 5, action: "answer_text" }, JSON.stringify({ answer_text: 12 })),
+    event({ card: 5, action: "answer_text" }, "not-json"),
+    event({ card: 5, action: "unknown" }),
+    { ...event({ card: 5, action: "answer_text" }), operator_id: "" },
+    { ...event({ card: 5, action: "answer_text" }), message_id: "" },
+    event({ card: 5, choice: 0 }),
+  ];
+  const lark = nodeCommand(
+    join(dir, "text-answer-lark"),
+    `#!${process.execPath}\nconst events=${JSON.stringify(events)};if(process.argv[2]==='event'){for(const event of events)console.log(JSON.stringify(event));setInterval(()=>{},1000);}else{for await(const chunk of process.stdin){}console.log(JSON.stringify({ok:true}));}`,
+  );
+  const stop = new AbortController();
+  const answers: unknown[][] = [];
+  const logs: string[] = [];
+  const timeout = setTimeout(() => stop.abort(), 5000);
+  try {
+    await feishu({
+      hub: {
+        async nextCard() {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return { card: null };
+        },
+        async answer(...args: unknown[]) {
+          answers.push(args);
+          if (answers.length === 2) stop.abort();
+          return { changed: true };
+        },
+      } as any,
+      options: { user: "ou_me", lark },
+      signal: stop.signal,
+      log: (line) => logs.push(line),
+    });
+  } finally {
+    clearTimeout(timeout);
+    stop.abort();
+  }
+  assert.deepEqual(answers, [
+    [5, { text, by: "ou_me", ref: "om_5" }],
+    [5, { choice: 0, by: "ou_me", ref: "om_5" }],
+  ]);
+  assert.ok(!logs.some((line) => line.includes(text)), "answer contents must not be written to channel logs");
 });
 
 test("feishu sends result media with stable keys before the interactive card, using the private cache", async () => {

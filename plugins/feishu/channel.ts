@@ -35,6 +35,28 @@ export function render(card: Card) {
     elements: [{ tag: "div", text: { tag: "plain_text", content: label } }],
   });
   const afterwards = outcome ? [{ tag: "markdown", content: `**${outcome}**` }] : [];
+  const textAnswer = {
+    tag: "form",
+    name: "answer_form",
+    elements: [
+      {
+        tag: "input",
+        name: "answer_text",
+        input_type: "multiline_text",
+        placeholder: { tag: "plain_text", content: "选项都不符合？写下你的说明或处理要求" },
+        required: true,
+        width: "fill",
+      },
+      {
+        tag: "button",
+        name: "submit_answer",
+        text: { tag: "plain_text", content: "提交文字回答" },
+        type: "primary",
+        action_type: "form_submit",
+        behaviors: [{ type: "callback", value: { card: card.id, action: "answer_text" } }],
+      },
+    ],
+  };
   return {
     schema: "2.0",
     config: { update_multi: true, enable_forward: false },
@@ -46,6 +68,7 @@ export function render(card: Card) {
       elements: [
         ...(card.text ? [{ tag: "markdown", content: card.text }] : []),
         ...(card.state === "open" ? card.options.map(option) : afterwards),
+        ...(card.state === "open" && card.kind === "ask" ? [textAnswer] : []),
       ],
     },
   };
@@ -152,12 +175,28 @@ export default async function feishu({ hub, options, directory, log, signal }: C
     }
   }
 
-  /** Only the owner's click on the card that was sent counts; the hub checks both. */
+  /** Buttons and form replies share the same owner/message checks and one-answer semantics in the hub. */
   async function clicked(line: string) {
     const event = JSON.parse(line);
     const value = JSON.parse(event.action_value);
-    if (!Number.isInteger(value.card) || !Number.isInteger(value.choice)) return;
-    const answer = await hub.answer(value.card, { choice: value.choice, by: event.operator_id, ref: event.message_id });
+    if (
+      !Number.isInteger(value.card) ||
+      value.card < 1 ||
+      typeof event.operator_id !== "string" ||
+      !event.operator_id.trim() ||
+      typeof event.message_id !== "string" ||
+      !event.message_id.trim()
+    )
+      return;
+    let response: { text: string } | { choice: number };
+    if (value.action === "answer_text") {
+      const form = JSON.parse(event.form_value);
+      const text = typeof form?.answer_text === "string" ? form.answer_text.trim() : "";
+      if (!text) return;
+      response = { text };
+    } else if (Number.isInteger(value.choice)) response = { choice: value.choice };
+    else return;
+    const answer = await hub.answer(value.card, { ...response, by: event.operator_id, ref: event.message_id });
     log(`card ${value.card}: answered by ${event.operator_id}, ${answer.changed ? "counted" : "already settled"}`);
   }
 

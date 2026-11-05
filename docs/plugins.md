@@ -78,6 +78,8 @@ Claude 委托 Codex 的完整规则、Skill 和参数调用脚本见[浏览器�
 
 通道和中台共用一个 Node 进程，外部调用应异步等待。内置飞书通道的用户查询、发送和更新均异步调用 CLI，发送期间中台仍能接收事件和心跳。
 
+飞书 / Lark 问题卡片的文字输入通过 JSON 2.0 表单提交。现有 `card.action.trigger` 事件由 CLI 回报 `action_value` 和 `form_value` 两段 JSON 字符串；通道将表单中的 `answer_text` 转为原接口的 `{ text, by, ref }`，保留本人身份与原消息核验，不建立新的会话或监听。单选按钮继续提交 `{ choice, by, ref }`；空白或无效表单不作为回答。
+
 ## 事件插件
 
 从 [hello-source/source.ts](../examples/plugins/hello-source/source.ts) 开始。它检查 `x-shop-signature` 中的 HMAC-SHA256，再把订单变成事件。
