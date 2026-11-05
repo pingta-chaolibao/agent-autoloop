@@ -52,7 +52,7 @@ export function render(card: Card) {
         name: "submit_answer",
         text: { tag: "plain_text", content: "提交文字回答" },
         type: "primary",
-        action_type: "form_submit",
+        form_action_type: "submit",
         behaviors: [{ type: "callback", value: { card: card.id, action: "answer_text" } }],
       },
     ],

@@ -5,6 +5,7 @@
 // identifier reaches the subject; a ping makes an event; replacement tokens in card text rewrite a webhook template.
 // A slow CLI call must not block the hub's HTTP loop while looking up a user, sending or updating a card.
 // A free-text reply must reach the same card with its author and message, without becoming an option or a blank answer.
+// JSON 2.0 must identify the submit button with form_action_type, or Lark rejects the whole form.
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -61,7 +62,8 @@ test("an open question accepts an independent multiline answer and removes the i
   assert.equal(input.name, "answer_text");
   assert.equal(input.input_type, "multiline_text");
   const submit = form.elements.find((element: any) => element.tag === "button");
-  assert.equal(submit.action_type, "form_submit");
+  assert.equal(submit.form_action_type, "submit");
+  assert.equal(submit.action_type, undefined);
   assert.deepEqual(submit.behaviors[0].value, { card: base.id, action: "answer_text" });
   for (const card of [
     { ...base, state: "decided" as const, answer: "两者都不是" },
